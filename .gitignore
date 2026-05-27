@@ -12,7 +12,7 @@ __pycache__/
 Thumbs.db
 
 # Large raw data
-data/raw/**
+
 !data/raw/**/
 !data/raw/**/.gitkeep
 !data/raw/**/README.md
@@ -27,7 +27,6 @@ outputs/**
 
 # Incoming/temp
 _incoming/
-*.zip
 *.7z
 *.rar
 
