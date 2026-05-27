@@ -27,12 +27,13 @@ def safe_size_mb(path: Path) -> float:
 
 
 def try_read_csv_columns(path: Path):
+    last_error = ""
     for enc in TEXT_ENCODINGS:
         try:
             df = pd.read_csv(path, encoding=enc, nrows=3)
             return list(df.columns), enc, ""
         except Exception as e:
-            last_error = str(e)[:120]
+            last_error = str(e)[:150]
     return [], "", last_error
 
 
@@ -43,20 +44,23 @@ def try_read_excel_columns(path: Path):
         df = pd.read_excel(path, sheet_name=sheet, nrows=3)
         return list(df.columns), sheet, ""
     except Exception as e:
-        return [], "", str(e)[:120]
+        return [], "", str(e)[:150]
 
 
 def inspect_zip(path: Path):
     try:
         with zipfile.ZipFile(path, "r") as z:
             names = z.namelist()
-            return len(names), "; ".join(names[:10])
+            return len(names), "; ".join(names[:15])
     except Exception as e:
-        return 0, str(e)[:120]
+        return 0, str(e)[:150]
 
 
 def detect_category(path: Path):
-    rel_parts = path.relative_to(RAW_DIR).parts
+    try:
+        rel_parts = path.relative_to(RAW_DIR).parts
+    except ValueError:
+        return "", ""
     if not rel_parts:
         return "", ""
     folder = rel_parts[0]
@@ -69,25 +73,32 @@ def main():
     if not RAW_DIR.exists():
         raise FileNotFoundError(f"RAW_DIR not found: {RAW_DIR}")
 
-    files = [p for p in RAW_DIR.rglob("*") if p.is_file() and p.name != ".gitkeep"]
+    files = [
+        p for p in RAW_DIR.rglob("*")
+        if p.is_file() and p.name != ".gitkeep"
+    ]
 
     for path in files:
         category_code, category_name = detect_category(path)
         ext = path.suffix.lower()
+
         columns = []
-        read_info = ""
+        preview_info = ""
         error = ""
         zip_count = ""
         zip_preview = ""
 
         if ext in [".csv", ".txt"]:
-            columns, read_info, error = try_read_csv_columns(path)
+            columns, preview_info, error = try_read_csv_columns(path)
         elif ext in [".xlsx", ".xls"]:
-            columns, read_info, error = try_read_excel_columns(path)
+            columns, preview_info, error = try_read_excel_columns(path)
         elif ext == ".zip":
             zip_count, zip_preview = inspect_zip(path)
+            preview_info = "zip"
+        elif ext in [".shp", ".dbf", ".shx", ".prj", ".cpg"]:
+            preview_info = "shapefile_component"
         else:
-            read_info = "not_previewed"
+            preview_info = "not_previewed"
 
         records.append({
             "category_code": category_code,
@@ -97,14 +108,19 @@ def main():
             "extension": ext,
             "size_mb": safe_size_mb(path),
             "modified_time": datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
-            "preview_info": read_info,
-            "columns_preview": " | ".join(map(str, columns[:30])),
+            "preview_info": preview_info,
+            "columns_preview": " | ".join(map(str, columns[:40])),
             "zip_file_count": zip_count,
             "zip_preview": zip_preview,
             "error": error,
         })
 
     df = pd.DataFrame(records)
+
+    if len(df) == 0:
+        print("[WARN] No files found under data/raw")
+        return
+
     df = df.sort_values(["category_code", "relative_path"]).reset_index(drop=True)
 
     csv_path = OUT_DIR / "data_inventory.csv"
