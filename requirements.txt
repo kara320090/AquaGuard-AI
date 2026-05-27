@@ -11,3 +11,5 @@ streamlit-folium
 pyyaml
 python-dotenv
 tqdm
+pyshp
+dbfread
