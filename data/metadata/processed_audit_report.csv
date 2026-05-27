@@ -1,0 +1,13 @@
+﻿level,file_key,message
+INFO,01_reservoir_sigungu_daily,"rows=25564, cols=11"
+WARN,01_reservoir_sigungu_daily,계룡시 missing: acceptable if no agricultural reservoir data
+INFO,01_reservoir_facility_summary,"rows=14, cols=7"
+WARN,01_reservoir_facility_summary,missing sigungu allowed: ['계룡시']
+INFO,04_weather_drought_latest,"rows=15, cols=12"
+INFO,03_crop_vulnerability,"rows=15, cols=34"
+INFO,05_agri_impact,"rows=15, cols=52"
+INFO,02_well_latest,"rows=15, cols=18"
+INFO,02_well_yearly,"rows=120, cols=22"
+INFO,02_well_trend,"rows=15, cols=9"
+WARN,02_well_yearly,"2023 groundwater likely under-counted: gdb_well_info_new_20231231.zip, count=1597.0"
+WARN,02_well_yearly,"2024 gdb groundwater likely under-counted: gdb_well_info_new_2024.zip, count=1601.0"

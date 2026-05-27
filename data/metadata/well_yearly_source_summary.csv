@@ -1,0 +1,9 @@
+﻿source_type,year,source_zip,total_well_count,total_groundwater,total_drilling
+drilling_developed_well,2021,한국농어촌공사 시추개발 관정 데이터_2021.zip,3534,0,3534
+drilling_developed_well,2023,한국농어촌공사_시추개발관정_2023.zip,3603,0,3603
+drilling_developed_well,2024,한국농어촌공사_시추개발관정_2024.zip,3627,0,3627
+drilling_developed_well,2025,한국농어촌공사_시추개발관정_2025.zip,3653,0,3653
+groundwater_well,2020,지하수 관정현황_컬럼정의서포함20200928.zip,114736,114736,0
+groundwater_well,2023,gdb_well_info_new_20231231.zip,1597,1597,0
+groundwater_well,2024,gdb_well_info_new_2024.zip,1601,1601,0
+groundwater_well,2024,한국농어촌공사_지하수 관정현황_20241231.zip,108973,108973,0
