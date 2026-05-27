@@ -1,0 +1,36 @@
+﻿# Python
+__pycache__/
+*.pyc
+.venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large raw data
+data/raw/**
+!data/raw/**/
+!data/raw/**/.gitkeep
+!data/raw/**/README.md
+
+# Temporary data
+data/interim/**
+!data/interim/.gitkeep
+
+# Outputs
+outputs/**
+!outputs/.gitkeep
+
+# Incoming/temp
+_incoming/
+*.zip
+*.7z
+*.rar
+
+# Logs
+logs/
+*.log

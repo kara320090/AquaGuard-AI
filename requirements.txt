@@ -1,0 +1,13 @@
+﻿pandas
+numpy
+openpyxl
+xlrd
+scikit-learn
+matplotlib
+plotly
+streamlit
+folium
+streamlit-folium
+pyyaml
+python-dotenv
+tqdm
