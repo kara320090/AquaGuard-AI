@@ -310,6 +310,21 @@ def build_sigungu_summary(today):
 def build_status(raw, today, sigungu_summary, raw_bytes, encoding):
     latest_date = today["date"].max() if "date" in today.columns and len(today) else pd.NaT
 
+    if pd.isna(latest_date):
+        latest_measurement_date = ""
+        data_age_days = np.nan
+        freshness_status = "UNKNOWN"
+    else:
+        latest_measurement_date = str(pd.Timestamp(latest_date).date())
+        collection_date = pd.Timestamp(datetime.now(KST).date())
+        data_age_days = int((collection_date - pd.Timestamp(latest_date).normalize()).days)
+        if data_age_days <= 3:
+            freshness_status = "FRESH"
+        elif data_age_days <= 7:
+            freshness_status = "STALE_BUT_USABLE"
+        else:
+            freshness_status = "STALE_CHECK_REQUIRED"
+
     status = {
         "collection_date_kst": TODAY,
         "source_url": OLDAM_URL,
@@ -320,7 +335,9 @@ def build_status(raw, today, sigungu_summary, raw_bytes, encoding):
         "standardized_rows": len(today),
         "matched_rows": int(today["facility_match_status"].isin(["facility_name_matched", "location_matched"]).sum()) if "facility_match_status" in today.columns else 0,
         "unmatched_rows": int((today["facility_match_status"] == "unmatched").sum()) if "facility_match_status" in today.columns else len(today),
-        "latest_measurement_date": "" if pd.isna(latest_date) else str(pd.Timestamp(latest_date).date()),
+        "latest_measurement_date": latest_measurement_date,
+        "data_age_days": data_age_days,
+        "freshness_status": freshness_status,
         "sigungu_count": sigungu_summary["sigungu"].nunique() if not sigungu_summary.empty else 0,
         "avg_reservoir_rate_today": float(today["reservoir_rate_for_score"].mean()) if len(today) else np.nan,
         "low_40_count_today": int((today["reservoir_rate_for_score"] <= 40).sum()) if len(today) else 0,

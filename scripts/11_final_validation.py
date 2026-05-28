@@ -8,6 +8,8 @@ REQUIRED_FILES = [
     "README.md",
     "app.py",
     "pages/01_Reservoir_Watchlist.py",
+    "pages/02_Deep_AI_Insights.py",
+    "pages/03_Live_Data_Update.py",
 
     "data/processed/aquaguard_sigungu_features.csv",
     "data/processed/aquaguard_priority_top15.csv",
@@ -34,6 +36,20 @@ REQUIRED_FILES = [
 
     "docs/DEMO_SCENARIO.md",
     "docs/SUBMISSION_CHECKLIST.md",
+
+    # Live data outputs
+    "data/processed/latest_weather_30d_by_sigungu.csv",
+    "data/processed/latest_kma_aws_weather_30d_by_sigungu.csv",
+    "data/processed/latest_adms_soil_moisture_by_sigungu.csv",
+    "data/processed/latest_adms_reservoir_support_by_sigungu.csv",
+    "data/processed/latest_live_sigungu_features.csv",
+    "reports/tables/latest_live_data_status.csv",
+    "reports/tables/latest_live_risk_summary.csv",
+    "reports/tables/latest_oldam_status_summary.csv",
+    "reports/tables/latest_kma_aws_weather_status.csv",
+    "reports/tables/latest_adms_soil_moisture_status.csv",
+    "reports/tables/latest_adms_reservoir_support_status.csv",
+    "reports/tables/latest_reservoir_source_crosscheck.csv",
 ]
 
 EXPECTED_SIGUNGU_COUNT = 15
@@ -49,6 +65,13 @@ def row(check, target, status, detail=""):
     }
 
 
+def safe_read_csv(rel_path):
+    path = ROOT / rel_path
+    if not path.exists():
+        return None
+    return pd.read_csv(path)
+
+
 def main():
     records = []
 
@@ -61,6 +84,7 @@ def main():
             "" if path.exists() else "missing file",
         ))
 
+    # Static / PDF 기준 feature 검증
     feature_path = ROOT / "data/processed/aquaguard_sigungu_features.csv"
     if feature_path.exists():
         df = pd.read_csv(feature_path)
@@ -81,6 +105,7 @@ def main():
         for c in required_cols:
             records.append(row("feature_required_col", c, "PASS" if c in df.columns else "FAIL"))
 
+    # 대체수원 추천 검증
     cand_path = ROOT / "reports/tables/alternative_source_top5_by_sigungu.csv"
     if cand_path.exists():
         cdf = pd.read_csv(cand_path)
@@ -92,6 +117,7 @@ def main():
         records.append(row("candidate_duplicate_count", "candidate duplicate", "PASS" if dup == 0 else "FAIL", f"duplicate_count={dup}"))
         records.append(row("candidate_top5_unique", "candidate_reservoir_name", "PASS" if min_unique >= 5 else "FAIL", f"min_unique={min_unique}"))
 
+    # 저수지 watchlist 검증
     watch_path = ROOT / "reports/tables/reservoir_watchlist.csv"
     if watch_path.exists():
         wdf = pd.read_csv(watch_path)
@@ -102,6 +128,59 @@ def main():
     if facility_path.exists():
         fdf = pd.read_csv(facility_path)
         records.append(row("facility_status_non_empty", "reservoir_facility_status_for_dashboard.csv", "PASS" if len(fdf) > 0 else "FAIL", f"rows={len(fdf)}"))
+
+    # Live 데이터 검증
+    live_status = safe_read_csv("reports/tables/latest_live_data_status.csv")
+    if live_status is not None and len(live_status):
+        s = live_status.iloc[-1]
+
+        records.append(row("live_feature_rows", "latest_live_data_status.csv", "PASS" if int(s.get("live_feature_rows", 0)) == 15 else "FAIL", f"live_feature_rows={s.get('live_feature_rows')}"))
+        records.append(row("live_weather_coverage", "live_weather_kma_count", "PASS" if int(s.get("live_weather_kma_count", 0)) == 15 else "FAIL", f"live_weather_kma_count={s.get('live_weather_kma_count')}"))
+        records.append(row("live_soil_coverage", "live_soil_adms_count", "PASS" if int(s.get("live_soil_adms_count", 0)) == 15 else "FAIL", f"live_soil_adms_count={s.get('live_soil_adms_count')}"))
+        records.append(row("live_status_success", "latest_live_data_status.csv", "PASS" if str(s.get("status", "")) == "SUCCESS" else "FAIL", f"status={s.get('status')}"))
+
+    live_feature = safe_read_csv("data/processed/latest_live_sigungu_features.csv")
+    if live_feature is not None:
+        records.append(row("live_feature_sigungu_unique", "latest_live_sigungu_features.csv", "PASS" if live_feature["sigungu"].nunique() == 15 else "FAIL", f"unique={live_feature['sigungu'].nunique()}"))
+
+        live_score = pd.to_numeric(live_feature["final_live_water_risk_score"], errors="coerce")
+        records.append(row("live_score_missing", "final_live_water_risk_score", "PASS" if live_score.isna().sum() == 0 else "FAIL", f"missing={live_score.isna().sum()}"))
+        records.append(row("live_score_range", "final_live_water_risk_score", "PASS" if ((live_score >= 0) & (live_score <= 100)).all() else "FAIL", f"min={live_score.min()}, max={live_score.max()}"))
+
+        for c in ["live_weather_source", "live_reservoir_source", "live_soil_source"]:
+            records.append(row("live_required_col", c, "PASS" if c in live_feature.columns else "FAIL"))
+
+    oldam_status = safe_read_csv("reports/tables/latest_oldam_status_summary.csv")
+    if oldam_status is not None and len(oldam_status):
+        s = oldam_status.iloc[-1]
+        records.append(row("oldam_status_success", "latest_oldam_status_summary.csv", "PASS" if str(s.get("status", "")) == "SUCCESS" else "FAIL", f"status={s.get('status')}"))
+        records.append(row("oldam_matched_rows", "matched_rows", "PASS" if int(s.get("matched_rows", 0)) > 0 else "FAIL", f"matched_rows={s.get('matched_rows')}"))
+        records.append(row("oldam_sigungu_count", "sigungu_count", "PASS" if int(s.get("sigungu_count", 0)) >= 5 else "FAIL", f"sigungu_count={s.get('sigungu_count')}"))
+
+    aws_status = safe_read_csv("reports/tables/latest_kma_aws_weather_status.csv")
+    if aws_status is not None and len(aws_status):
+        s = aws_status.iloc[-1]
+        records.append(row("aws_status_success", "latest_kma_aws_weather_status.csv", "PASS" if str(s.get("status", "")) == "SUCCESS" else "FAIL", f"status={s.get('status')}"))
+        records.append(row("aws_sigungu_count", "sigungu_count", "PASS" if int(s.get("sigungu_count", 0)) == 15 else "FAIL", f"sigungu_count={s.get('sigungu_count')}"))
+
+    soil_status = safe_read_csv("reports/tables/latest_adms_soil_moisture_status.csv")
+    if soil_status is not None and len(soil_status):
+        s = soil_status.iloc[-1]
+        records.append(row("soil_status_success", "latest_adms_soil_moisture_status.csv", "PASS" if str(s.get("status", "")) == "SUCCESS" else "FAIL", f"status={s.get('status')}"))
+        records.append(row("soil_sigungu_count", "sigungu_count", "PASS" if int(s.get("sigungu_count", 0)) == 15 else "FAIL", f"sigungu_count={s.get('sigungu_count')}"))
+
+    adms_rvow_status = safe_read_csv("reports/tables/latest_adms_reservoir_support_status.csv")
+    if adms_rvow_status is not None and len(adms_rvow_status):
+        s = adms_rvow_status.iloc[-1]
+        records.append(row("adms_rvow_status_success", "latest_adms_reservoir_support_status.csv", "PASS" if str(s.get("status", "")) == "SUCCESS" else "FAIL", f"status={s.get('status')}"))
+        records.append(row("adms_rvow_success_rows", "success_rows", "PASS" if int(s.get("success_rows", 0)) == 15 else "FAIL", f"success_rows={s.get('success_rows')}"))
+
+    crosscheck = safe_read_csv("reports/tables/latest_reservoir_source_crosscheck.csv")
+    if crosscheck is not None:
+        records.append(row("crosscheck_rows", "latest_reservoir_source_crosscheck.csv", "PASS" if len(crosscheck) == 15 else "FAIL", f"rows={len(crosscheck)}"))
+        if "crosscheck_status" in crosscheck.columns:
+            both_count = int((crosscheck["crosscheck_status"] == "ADMS_AND_OLDAM").sum())
+            records.append(row("crosscheck_oldam_overlap", "ADMS_AND_OLDAM", "PASS" if both_count >= 5 else "WARN", f"ADMS_AND_OLDAM={both_count}"))
 
     report = pd.DataFrame(records)
     out_path = ROOT / "data/metadata/final_validation_report.csv"
