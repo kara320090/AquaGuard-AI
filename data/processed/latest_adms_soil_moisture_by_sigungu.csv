@@ -1,0 +1,16 @@
+﻿soil_moisture_rank,sigungu,soil_data_date,soil_row_count,soil_moisture_avg,soil_moisture_min,soil_moisture_max,soil_dry_count,soil_severe_count,soil_moisture_drought_score,soil_data_status
+1,계룡시,,1,110.0,110.0,110.0,0,0,0.0,ADMS_SOIL_AUTO
+2,공주시,,1,114.0,114.0,114.0,0,0,0.0,ADMS_SOIL_AUTO
+3,금산군,,1,113.0,113.0,113.0,0,0,0.0,ADMS_SOIL_AUTO
+4,논산시,,1,113.0,113.0,113.0,0,0,0.0,ADMS_SOIL_AUTO
+5,당진시,,1,114.0,114.0,114.0,0,0,0.0,ADMS_SOIL_AUTO
+6,보령시,,1,115.0,115.0,115.0,0,0,0.0,ADMS_SOIL_AUTO
+7,부여군,,1,114.0,114.0,114.0,0,0,0.0,ADMS_SOIL_AUTO
+8,서산시,,1,114.0,114.0,114.0,0,0,0.0,ADMS_SOIL_AUTO
+9,서천군,,1,114.0,114.0,114.0,0,0,0.0,ADMS_SOIL_AUTO
+10,아산시,,1,112.0,112.0,112.0,0,0,0.0,ADMS_SOIL_AUTO
+11,예산군,,1,113.0,113.0,113.0,0,0,0.0,ADMS_SOIL_AUTO
+12,천안시,,1,111.0,111.0,111.0,0,0,0.0,ADMS_SOIL_AUTO
+13,청양군,,1,114.0,114.0,114.0,0,0,0.0,ADMS_SOIL_AUTO
+14,태안군,,1,113.0,113.0,113.0,0,0,0.0,ADMS_SOIL_AUTO
+15,홍성군,,1,113.0,113.0,113.0,0,0,0.0,ADMS_SOIL_AUTO
