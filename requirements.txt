@@ -1,4 +1,4 @@
-﻿pandas
+pandas
 numpy
 openpyxl
 xlrd
@@ -13,3 +13,7 @@ python-dotenv
 tqdm
 pyshp
 dbfread
+requests
+lxml
+beautifulsoup4
+html5lib
