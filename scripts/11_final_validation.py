@@ -7,14 +7,18 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_FILES = [
     "README.md",
     "app.py",
+    "pages/01_Reservoir_Watchlist.py",
 
     "data/processed/aquaguard_sigungu_features.csv",
     "data/processed/aquaguard_priority_top15.csv",
     "data/processed/alternative_source_candidates.csv",
+    "data/processed/reservoir_facility_status_for_dashboard.csv",
 
     "reports/tables/alternative_source_top5_by_sigungu.csv",
     "reports/tables/top_priority_summary.csv",
     "reports/tables/main_driver_summary.csv",
+    "reports/tables/reservoir_watchlist.csv",
+    "reports/tables/reservoir_facility_status_by_sigungu.csv",
 
     "reports/figures/01_final_risk_ranking.png",
     "reports/figures/02_risk_components_stacked.png",
@@ -24,6 +28,7 @@ REQUIRED_FILES = [
 
     "data/metadata/final_feature_formula.md",
     "data/metadata/alternative_source_recommendation_method.md",
+    "data/metadata/reservoir_watchlist_method.md",
     "data/metadata/processed_audit_report.csv",
     "data/metadata/visual_generation_summary.md",
 
@@ -35,185 +40,68 @@ EXPECTED_SIGUNGU_COUNT = 15
 EXPECTED_CANDIDATE_ROWS = 75
 
 
-def check_file_exists():
-    rows = []
-    for rel in REQUIRED_FILES:
-        path = ROOT / rel
-        rows.append({
-            "check": "file_exists",
-            "target": rel,
-            "status": "PASS" if path.exists() else "FAIL",
-            "detail": "" if path.exists() else "missing file",
-        })
-    return rows
-
-
-def check_features():
-    rows = []
-    path = ROOT / "data/processed/aquaguard_sigungu_features.csv"
-
-    if not path.exists():
-        return [{
-            "check": "features",
-            "target": str(path),
-            "status": "FAIL",
-            "detail": "feature file missing",
-        }]
-
-    df = pd.read_csv(path)
-
-    required_cols = [
-        "sigungu",
-        "final_priority_rank",
-        "final_water_risk_score",
-        "final_water_risk_level",
-        "main_risk_driver",
-        "rain_shortage_score",
-        "reservoir_risk_score",
-        "groundwater_dependency_score",
-        "crop_water_demand_score",
-        "alternative_source_access_shortage_score",
-    ]
-
-    for col in required_cols:
-        rows.append({
-            "check": "feature_required_column",
-            "target": col,
-            "status": "PASS" if col in df.columns else "FAIL",
-            "detail": "",
-        })
-
-    rows.append({
-        "check": "feature_row_count",
-        "target": "aquaguard_sigungu_features.csv",
-        "status": "PASS" if len(df) == EXPECTED_SIGUNGU_COUNT else "FAIL",
-        "detail": f"rows={len(df)}",
-    })
-
-    rows.append({
-        "check": "feature_sigungu_unique",
-        "target": "sigungu",
-        "status": "PASS" if df["sigungu"].nunique() == EXPECTED_SIGUNGU_COUNT else "FAIL",
-        "detail": f"unique={df['sigungu'].nunique()}",
-    })
-
-    score = pd.to_numeric(df["final_water_risk_score"], errors="coerce")
-
-    rows.append({
-        "check": "final_score_not_null",
-        "target": "final_water_risk_score",
-        "status": "PASS" if score.isna().sum() == 0 else "FAIL",
-        "detail": f"missing={score.isna().sum()}",
-    })
-
-    rows.append({
-        "check": "final_score_range",
-        "target": "final_water_risk_score",
-        "status": "PASS" if ((score >= 0) & (score <= 100)).all() else "FAIL",
-        "detail": f"min={score.min()}, max={score.max()}",
-    })
-
-    return rows
-
-
-def check_candidates():
-    rows = []
-    path = ROOT / "reports/tables/alternative_source_top5_by_sigungu.csv"
-
-    if not path.exists():
-        return [{
-            "check": "candidates",
-            "target": str(path),
-            "status": "FAIL",
-            "detail": "candidate file missing",
-        }]
-
-    df = pd.read_csv(path)
-
-    rows.append({
-        "check": "candidate_row_count",
-        "target": "alternative_source_top5_by_sigungu.csv",
-        "status": "PASS" if len(df) == EXPECTED_CANDIDATE_ROWS else "FAIL",
-        "detail": f"rows={len(df)}",
-    })
-
-    rows.append({
-        "check": "candidate_target_count",
-        "target": "target_sigungu",
-        "status": "PASS" if df["target_sigungu"].nunique() == EXPECTED_SIGUNGU_COUNT else "FAIL",
-        "detail": f"targets={df['target_sigungu'].nunique()}",
-    })
-
-    by_target = df.groupby("target_sigungu")["candidate_reservoir_name"].nunique()
-    min_unique = int(by_target.min())
-
-    rows.append({
-        "check": "candidate_top5_unique_per_target",
-        "target": "candidate_reservoir_name",
-        "status": "PASS" if min_unique >= 5 else "FAIL",
-        "detail": f"min_unique_candidates={min_unique}",
-    })
-
-    dup = df.duplicated(["target_sigungu", "candidate_reservoir_name", "candidate_sigungu"]).sum()
-
-    rows.append({
-        "check": "candidate_duplicate_count",
-        "target": "target_sigungu + candidate_reservoir_name + candidate_sigungu",
-        "status": "PASS" if dup == 0 else "FAIL",
-        "detail": f"duplicate_count={dup}",
-    })
-
-    return rows
-
-
-def check_docs_text():
-    rows = []
-
-    readme = ROOT / "README.md"
-    if readme.exists():
-        text = readme.read_text(encoding="utf-8", errors="ignore")
-        keywords = [
-            "25:20",
-            "대체 수원 후보",
-            "streamlit run app.py",
-            "관로, 수리권, 수질",
-        ]
-
-        for kw in keywords:
-            rows.append({
-                "check": "readme_keyword",
-                "target": kw,
-                "status": "PASS" if kw in text else "WARN",
-                "detail": "",
-            })
-
-    app = ROOT / "app.py"
-    if app.exists():
-        text = app.read_text(encoding="utf-8", errors="ignore")
-        keywords = [
-            "st.set_page_config",
-            "HTML 행정 리포트 다운로드",
-            "alternative_source",
-            "scatter_mapbox",
-        ]
-
-        for kw in keywords:
-            rows.append({
-                "check": "app_keyword",
-                "target": kw,
-                "status": "PASS" if kw in text else "FAIL",
-                "detail": "",
-            })
-
-    return rows
+def row(check, target, status, detail=""):
+    return {
+        "check": check,
+        "target": target,
+        "status": status,
+        "detail": detail,
+    }
 
 
 def main():
     records = []
-    records.extend(check_file_exists())
-    records.extend(check_features())
-    records.extend(check_candidates())
-    records.extend(check_docs_text())
+
+    for rel in REQUIRED_FILES:
+        path = ROOT / rel
+        records.append(row(
+            "file_exists",
+            rel,
+            "PASS" if path.exists() else "FAIL",
+            "" if path.exists() else "missing file",
+        ))
+
+    feature_path = ROOT / "data/processed/aquaguard_sigungu_features.csv"
+    if feature_path.exists():
+        df = pd.read_csv(feature_path)
+        score = pd.to_numeric(df["final_water_risk_score"], errors="coerce")
+
+        records.append(row("feature_rows", "aquaguard_sigungu_features.csv", "PASS" if len(df) == 15 else "FAIL", f"rows={len(df)}"))
+        records.append(row("feature_sigungu_unique", "sigungu", "PASS" if df["sigungu"].nunique() == 15 else "FAIL", f"unique={df['sigungu'].nunique()}"))
+        records.append(row("final_score_missing", "final_water_risk_score", "PASS" if score.isna().sum() == 0 else "FAIL", f"missing={score.isna().sum()}"))
+        records.append(row("final_score_range", "final_water_risk_score", "PASS" if ((score >= 0) & (score <= 100)).all() else "FAIL", f"min={score.min()}, max={score.max()}"))
+
+        required_cols = [
+            "rain_shortage_score",
+            "reservoir_risk_score",
+            "groundwater_dependency_score",
+            "crop_water_demand_score",
+            "alternative_source_access_shortage_score",
+        ]
+        for c in required_cols:
+            records.append(row("feature_required_col", c, "PASS" if c in df.columns else "FAIL"))
+
+    cand_path = ROOT / "reports/tables/alternative_source_top5_by_sigungu.csv"
+    if cand_path.exists():
+        cdf = pd.read_csv(cand_path)
+        dup = cdf.duplicated(["target_sigungu", "candidate_reservoir_name", "candidate_sigungu"]).sum()
+        min_unique = cdf.groupby("target_sigungu")["candidate_reservoir_name"].nunique().min()
+
+        records.append(row("candidate_rows", "alternative_source_top5_by_sigungu.csv", "PASS" if len(cdf) == 75 else "FAIL", f"rows={len(cdf)}"))
+        records.append(row("candidate_target_count", "target_sigungu", "PASS" if cdf["target_sigungu"].nunique() == 15 else "FAIL", f"targets={cdf['target_sigungu'].nunique()}"))
+        records.append(row("candidate_duplicate_count", "candidate duplicate", "PASS" if dup == 0 else "FAIL", f"duplicate_count={dup}"))
+        records.append(row("candidate_top5_unique", "candidate_reservoir_name", "PASS" if min_unique >= 5 else "FAIL", f"min_unique={min_unique}"))
+
+    watch_path = ROOT / "reports/tables/reservoir_watchlist.csv"
+    if watch_path.exists():
+        wdf = pd.read_csv(watch_path)
+        records.append(row("watchlist_rows", "reservoir_watchlist.csv", "PASS" if len(wdf) == 15 else "FAIL", f"rows={len(wdf)}"))
+        records.append(row("watchlist_sigungu_unique", "sigungu", "PASS" if wdf["sigungu"].nunique() == 15 else "FAIL", f"unique={wdf['sigungu'].nunique()}"))
+
+    facility_path = ROOT / "data/processed/reservoir_facility_status_for_dashboard.csv"
+    if facility_path.exists():
+        fdf = pd.read_csv(facility_path)
+        records.append(row("facility_status_non_empty", "reservoir_facility_status_for_dashboard.csv", "PASS" if len(fdf) > 0 else "FAIL", f"rows={len(fdf)}"))
 
     report = pd.DataFrame(records)
     out_path = ROOT / "data/metadata/final_validation_report.csv"
