@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from io import BytesIO, StringIO
 import re
@@ -312,6 +312,9 @@ def standardize(df, query_date):
 
     out = out[is_chungnam].copy()
 
+    # 빈 DataFrame에서 scalar 컬럼을 먼저 만든 경우 NaN으로 남을 수 있어 필터 후 재보정
+    out["source_query_date"] = query_date
+
     # 토양수분 수치만 있고 단계가 없으면 낮은 수분일수록 위험
     if out["soil_stage_score"].notna().sum() == 0:
         if out["soil_moisture"].notna().sum() > 0:
@@ -358,6 +361,14 @@ def build_sigungu_summary(std):
     ).reset_index()
 
     out["soil_moisture_drought_score"] = out["soil_moisture_drought_score"].clip(0, 100)
+
+    # ADMS 표에는 별도 날짜 컬럼이 없을 수 있으므로 source_query_date로 기준일 보정
+    if "source_query_date" in std.columns and len(std) > 0:
+        source_dates = std["source_query_date"].dropna().astype(str)
+        fallback_date = source_dates.iloc[0] if len(source_dates) else ""
+        if fallback_date:
+            out["soil_data_date"] = out["soil_data_date"].fillna(fallback_date)
+
     out["soil_data_status"] = "ADMS_SOIL_AUTO"
 
     out = out.sort_values("soil_moisture_drought_score", ascending=False).reset_index(drop=True)
