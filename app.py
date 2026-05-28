@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 from datetime import datetime
 import base64
 
@@ -260,6 +260,78 @@ def format_score(x):
     return f"{float(x):.1f}"
 
 
+def build_reason_detail(row):
+    items = []
+
+    mapping = [
+        ("rain_shortage_score", "강우부족"),
+        ("reservoir_risk_score", "저수율"),
+        ("groundwater_dependency_score", "관정의존"),
+        ("crop_water_demand_score", "작물수요"),
+        ("alternative_source_access_shortage_score", "대체수원"),
+    ]
+
+    for col, label in mapping:
+        value = row.get(col, None)
+        if pd.notna(value):
+            items.append((label, float(value)))
+
+    if not items:
+        return "세부 지표 없음"
+
+    items = sorted(items, key=lambda x: x[1], reverse=True)
+    top3 = items[:3]
+    score_text = ", ".join([f"{name} {score:.1f}점" for name, score in top3])
+
+    high = [name for name, score in top3 if score >= 60]
+    medium = [name for name, score in top3 if 40 <= score < 60]
+
+    if high:
+        reason = " / ".join(high) + " 영향이 큼"
+    elif medium:
+        reason = " / ".join(medium) + " 지표 확인 필요"
+    else:
+        reason = "절대 위험도는 낮지만 상대적으로 높은 지표 기준 정렬"
+
+    return f"{score_text} → {reason}"
+
+
+def build_component_explanation(row):
+    rows = []
+    for col, label, weight in PDF_COMPONENTS:
+        raw_value = row.get(col, np.nan)
+        score = 50.0 if pd.isna(raw_value) else float(raw_value)
+        rows.append({
+            "지표": label,
+            "원점수": score,
+            "가중치": f"{int(weight * 100)}%",
+            "위험 기여점수": score * weight,
+            "해석": explain_component(col, score),
+        })
+
+    out = pd.DataFrame(rows)
+    out = out.sort_values("위험 기여점수", ascending=False).reset_index(drop=True)
+    out["원점수"] = out["원점수"].map(lambda x: f"{x:.1f}")
+    out["위험 기여점수"] = out["위험 기여점수"].map(lambda x: f"{x:.1f}")
+    return out
+
+
+def explain_component(col, score):
+    score = 0 if pd.isna(score) else float(score)
+
+    if col == "rain_shortage_score":
+        return "최근 강우 부족 영향이 큼" if score >= 60 else "최근 강우 부족 영향은 제한적"
+    if col == "reservoir_risk_score":
+        return "저수율 부족 또는 저수지 편차 확인 필요" if score >= 40 else "저수율 위험은 상대적으로 낮음"
+    if col == "groundwater_dependency_score":
+        return "관정 의존도가 높아 지하수 부담 가능" if score >= 60 else "관정 의존도 부담은 낮음"
+    if col == "crop_water_demand_score":
+        return "작물 물수요가 높아 용수 수요 증가 가능" if score >= 60 else "작물 물수요 영향은 제한적"
+    if col == "alternative_source_access_shortage_score":
+        return "대체 수원 접근성이 부족해 보완 필요" if score >= 60 else "대체 수원 접근성은 상대적으로 양호"
+    return ""
+
+
 def selected_candidates(candidates, sigungu):
     if candidates.empty:
         return candidates
@@ -413,6 +485,7 @@ def main():
     st.sidebar.write(f"**위험도:** {selected_row['final_water_risk_score']:.1f}점")
     st.sidebar.write(f"**단계:** {selected_row['final_water_risk_level']}")
     st.sidebar.write(f"**주요 원인:** {selected_row['main_risk_driver']}")
+    st.sidebar.write(f"**상세:** {build_reason_detail(selected_row)}")
 
     tab1, tab2, tab3, tab4, tab5 = st.tabs(
         ["위험지도", "지역 상세", "대체 수원 후보", "전체 순위", "보고서용 이미지"]
@@ -422,19 +495,57 @@ def main():
         st.subheader("시·군별 농업용수 부족 위험지도")
         st.plotly_chart(make_risk_map(features, selected_sigungu), use_container_width=True)
 
+        st.markdown("#### 선택 지역 주요 원인 해석")
+        explanation_df = build_component_explanation(selected_row)
+        top_factor = explanation_df.iloc[0]
+
+        st.info(
+            f"{selected_sigungu}의 가장 큰 위험 기여 요인은 "
+            f"'{top_factor['지표']}'입니다. "
+            f"원점수는 {top_factor['원점수']}점, 가중 기여점수는 {top_factor['위험 기여점수']}점입니다. "
+            f"{top_factor['해석']}"
+        )
+
         st.dataframe(
-            features[[
-                "final_priority_rank",
-                "sigungu",
-                "final_water_risk_score",
-                "final_water_risk_level",
-                "main_risk_driver",
-            ]].rename(columns={
+            explanation_df,
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.markdown("#### 전체 시·군 위험도 요약")
+
+        ranking_view = features[[
+            "final_priority_rank",
+            "sigungu",
+            "final_water_risk_score",
+            "final_water_risk_level",
+            "main_risk_driver",
+            "rain_shortage_score",
+            "reservoir_risk_score",
+            "groundwater_dependency_score",
+            "crop_water_demand_score",
+            "alternative_source_access_shortage_score",
+        ]].copy()
+
+        ranking_view["main_reason_detail"] = ranking_view.apply(build_reason_detail, axis=1)
+
+        display_cols = [
+            "final_priority_rank",
+            "sigungu",
+            "final_water_risk_score",
+            "final_water_risk_level",
+            "main_risk_driver",
+            "main_reason_detail",
+        ]
+
+        st.dataframe(
+            ranking_view[display_cols].rename(columns={
                 "final_priority_rank": "순위",
                 "sigungu": "시·군",
                 "final_water_risk_score": "위험도",
                 "final_water_risk_level": "단계",
                 "main_risk_driver": "주요 원인",
+                "main_reason_detail": "주요 원인 상세",
             }),
             use_container_width=True,
             hide_index=True,
