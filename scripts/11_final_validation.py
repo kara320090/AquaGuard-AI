@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import pandas as pd
 import sys
 
@@ -128,6 +128,11 @@ def main():
     if facility_path.exists():
         fdf = pd.read_csv(facility_path)
         records.append(row("facility_status_non_empty", "reservoir_facility_status_for_dashboard.csv", "PASS" if len(fdf) > 0 else "FAIL", f"rows={len(fdf)}"))
+
+        dup_cols = [c for c in ["sigungu", "facility_name", "address"] if c in fdf.columns]
+        if dup_cols:
+            dup_count = int(fdf.duplicated(dup_cols).sum())
+            records.append(row("facility_duplicate_count", "reservoir_facility_status_for_dashboard.csv", "PASS" if dup_count == 0 else "FAIL", f"duplicate_count={dup_count}"))
 
     # Live 데이터 검증
     live_status = safe_read_csv("reports/tables/latest_live_data_status.csv")
