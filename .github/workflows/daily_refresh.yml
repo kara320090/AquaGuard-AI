@@ -11,6 +11,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  KMA_API_KEY: ${{ secrets.KMA_API_KEY }}
 
 jobs:
   refresh:
@@ -30,8 +31,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Rebuild generated outputs
+      - name: Fetch live data and rebuild outputs
         run: |
+          python scripts/14_fetch_oldam_reservoir_today.py
+          python scripts/15_fetch_kma_asos_daily_30d.py
+          python scripts/16_build_live_features.py
           python scripts/07_build_final_features.py
           python scripts/09_generate_visuals.py
           python scripts/10_recommend_alternative_sources.py
@@ -42,6 +46,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/processed reports/tables reports/figures data/metadata
+          git add data/processed reports/tables reports/figures data/metadata data/raw/live_snapshots
           git diff --cached --quiet || git commit -m "chore: refresh generated outputs"
           git push
