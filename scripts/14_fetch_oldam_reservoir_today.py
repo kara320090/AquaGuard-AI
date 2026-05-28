@@ -318,7 +318,7 @@ def build_status(raw, today, sigungu_summary, raw_bytes, encoding):
         "csv_encoding": encoding,
         "raw_rows": len(raw),
         "standardized_rows": len(today),
-        "matched_rows": int((today["facility_match_status"] == "matched").sum()) if "facility_match_status" in today.columns else 0,
+        "matched_rows": int(today["facility_match_status"].isin(["facility_name_matched", "location_matched"]).sum()) if "facility_match_status" in today.columns else 0,
         "unmatched_rows": int((today["facility_match_status"] == "unmatched").sum()) if "facility_match_status" in today.columns else len(today),
         "latest_measurement_date": "" if pd.isna(latest_date) else str(pd.Timestamp(latest_date).date()),
         "sigungu_count": sigungu_summary["sigungu"].nunique() if not sigungu_summary.empty else 0,
