@@ -1,0 +1,46 @@
+﻿check,target,status,detail
+file_exists,README.md,PASS,
+file_exists,app.py,PASS,
+file_exists,data/processed/aquaguard_sigungu_features.csv,PASS,
+file_exists,data/processed/aquaguard_priority_top15.csv,PASS,
+file_exists,data/processed/alternative_source_candidates.csv,PASS,
+file_exists,reports/tables/alternative_source_top5_by_sigungu.csv,PASS,
+file_exists,reports/tables/top_priority_summary.csv,PASS,
+file_exists,reports/tables/main_driver_summary.csv,PASS,
+file_exists,reports/figures/01_final_risk_ranking.png,PASS,
+file_exists,reports/figures/02_risk_components_stacked.png,PASS,
+file_exists,reports/figures/03_reservoir_vs_alternative_shortage_scatter.png,PASS,
+file_exists,reports/figures/04_top5_priority_table.png,PASS,
+file_exists,reports/figures/05_alternative_source_top1_by_risk_area.png,PASS,
+file_exists,data/metadata/final_feature_formula.md,PASS,
+file_exists,data/metadata/alternative_source_recommendation_method.md,PASS,
+file_exists,data/metadata/processed_audit_report.csv,PASS,
+file_exists,data/metadata/visual_generation_summary.md,PASS,
+file_exists,docs/DEMO_SCENARIO.md,PASS,
+file_exists,docs/SUBMISSION_CHECKLIST.md,PASS,
+feature_required_column,sigungu,PASS,
+feature_required_column,final_priority_rank,PASS,
+feature_required_column,final_water_risk_score,PASS,
+feature_required_column,final_water_risk_level,PASS,
+feature_required_column,main_risk_driver,PASS,
+feature_required_column,rain_shortage_score,PASS,
+feature_required_column,reservoir_risk_score,PASS,
+feature_required_column,groundwater_dependency_score,PASS,
+feature_required_column,crop_water_demand_score,PASS,
+feature_required_column,alternative_source_access_shortage_score,PASS,
+feature_row_count,aquaguard_sigungu_features.csv,PASS,rows=15
+feature_sigungu_unique,sigungu,PASS,unique=15
+final_score_not_null,final_water_risk_score,PASS,missing=0
+final_score_range,final_water_risk_score,PASS,"min=19.204248734570253, max=41.018313990061024"
+candidate_row_count,alternative_source_top5_by_sigungu.csv,PASS,rows=75
+candidate_target_count,target_sigungu,PASS,targets=15
+candidate_top5_unique_per_target,candidate_reservoir_name,PASS,min_unique_candidates=5
+candidate_duplicate_count,target_sigungu + candidate_reservoir_name + candidate_sigungu,PASS,duplicate_count=0
+readme_keyword,25:20,PASS,
+readme_keyword,대체 수원 후보,PASS,
+readme_keyword,streamlit run app.py,PASS,
+readme_keyword,"관로, 수리권, 수질",PASS,
+app_keyword,st.set_page_config,PASS,
+app_keyword,HTML 행정 리포트 다운로드,PASS,
+app_keyword,alternative_source,PASS,
+app_keyword,scatter_mapbox,PASS,
