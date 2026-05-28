@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import pandas as pd
 import numpy as np
 
@@ -152,12 +152,40 @@ def build_facility_status(features, facilities):
     sigungu_cols = [c for c in sigungu_cols if c in features.columns]
 
     sigungu_info = features[sigungu_cols].copy()
+    sigungu_info = sigungu_info.drop_duplicates(["sigungu"], keep="first")
 
     df = facilities.copy()
 
+    # 숫자 컬럼 정리
     for c in ["benefit_area", "effective_capacity", "total_capacity", "basin_area", "full_water_area"]:
         if c in df.columns:
             df[c] = to_num(df[c]).fillna(0)
+
+    # 문자열 컬럼 정리
+    for c in ["sigungu", "facility_name", "address", "source_file"]:
+        if c in df.columns:
+            df[c] = df[c].fillna("").astype(str).str.strip()
+
+    # 핵심: 동일 시군 + 동일 저수지명 + 동일 주소 중복 제거
+    # 원천 데이터에 같은 시설이 여러 번 반복되어 대시보드 표가 중복되는 문제를 방지한다.
+    dedup_cols = [c for c in ["sigungu", "facility_name", "address"] if c in df.columns]
+
+    if dedup_cols:
+        before_rows = len(df)
+
+        sort_cols = [c for c in ["benefit_area", "effective_capacity", "total_capacity"] if c in df.columns]
+        if sort_cols:
+            df = df.sort_values(
+                sort_cols,
+                ascending=[False] * len(sort_cols),
+                na_position="last",
+            )
+
+        df = df.drop_duplicates(subset=dedup_cols, keep="first").copy()
+        after_rows = len(df)
+        print(f"[DEDUP facility_status] removed={before_rows - after_rows}, rows={after_rows}")
+    else:
+        print("[WARN] facility dedup columns not found. Skip dedup.")
 
     df = df.merge(
         sigungu_info.rename(columns={
@@ -181,7 +209,8 @@ def build_facility_status(features, facilities):
     ).clip(0, 100)
 
     df["reservoir_status_note"] = df.apply(
-        lambda r: "시군 저수율 위험 높음" if pd.notna(r.get("sigungu_reservoir_risk_score")) and r["sigungu_reservoir_risk_score"] >= 40
+        lambda r: "시군 저수율 위험 높음"
+        if pd.notna(r.get("sigungu_reservoir_risk_score")) and r["sigungu_reservoir_risk_score"] >= 40
         else "일반 모니터링",
         axis=1
     )
@@ -208,6 +237,14 @@ def build_facility_status(features, facilities):
     keep = [c for c in keep if c in df.columns]
 
     out = df[keep].copy()
+
+    # 출력 직전 2차 중복 방어
+    final_dedup_cols = [c for c in ["sigungu", "facility_name", "address"] if c in out.columns]
+    if final_dedup_cols:
+        before_rows = len(out)
+        out = out.drop_duplicates(subset=final_dedup_cols, keep="first").copy()
+        print(f"[DEDUP final_output] removed={before_rows - len(out)}, rows={len(out)}")
+
     out = out.sort_values(
         ["sigungu", "inspection_priority_score", "benefit_area", "effective_capacity"],
         ascending=[True, False, False, False]
