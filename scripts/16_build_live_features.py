@@ -296,7 +296,7 @@ def build_status(live, oldam, kma):
         "kma_rows": len(kma),
         "kma_sigungu_count": kma["sigungu"].nunique() if not kma.empty and "sigungu" in kma.columns else 0,
         "live_reservoir_oldam_count": int((live["live_reservoir_source"] == "OLDAM_TODAY").sum()),
-        "live_weather_kma_count": int((live["live_weather_source"] == "KMA_ASOS_30D").sum()),
+        "live_weather_kma_count": int((live["live_weather_source"] != "BASELINE_WEATHER").sum()),
         "top_live_sigungu": live.iloc[0]["sigungu"] if len(live) else "",
         "top_live_score": live.iloc[0]["final_live_water_risk_score"] if len(live) else np.nan,
         "status": "SUCCESS",

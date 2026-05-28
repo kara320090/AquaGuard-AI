@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import pandas as pd
 import streamlit as st
 import plotly.express as px
@@ -47,7 +47,7 @@ avg_score = summary["final_live_water_risk_score"].mean()
 warning_count = summary[summary["final_live_water_risk_level"].isin(["주의", "경계", "심각"])].shape[0]
 
 oldam_count = int((live["live_reservoir_source"] == "OLDAM_TODAY").sum()) if "live_reservoir_source" in live.columns else 0
-kma_count = int((live["live_weather_source"] == "KMA_ASOS_30D").sum()) if "live_weather_source" in live.columns else 0
+kma_count = int((live["live_weather_source"] != "BASELINE_WEATHER").sum()) if "live_weather_source" in live.columns else 0
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Live 평균 위험도", f"{avg_score:.1f}점")
