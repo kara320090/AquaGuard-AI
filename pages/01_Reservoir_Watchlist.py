@@ -51,6 +51,7 @@ sigungu_list = watch.sort_values("watch_rank")["sigungu"].tolist()
 
 selected = st.sidebar.selectbox("시·군 선택", sigungu_list, index=0)
 
+top_watch = watch.sort_values("watch_rank").iloc[0]
 selected_watch = watch[watch["sigungu"] == selected].iloc[0]
 selected_facility = facility[facility["sigungu"] == selected].copy()
 
@@ -88,6 +89,33 @@ c1.metric("Watch 순위", f"{int(selected_watch['watch_rank'])}위")
 c2.metric("Watch 단계", str(selected_watch["watch_level"]))
 c3.metric("평균 저수율", f"{selected_watch.get('avg_reservoir_rate', 0):.1f}")
 c4.metric("저수율 위험도", f"{selected_watch.get('reservoir_risk_score', 0):.1f}")
+
+st.markdown("### 전체 Watch 1위 지역")
+
+top_sigungu = str(top_watch.get("sigungu", "-"))
+top_level = str(top_watch.get("watch_level", "-"))
+top_reason = str(top_watch.get("watch_reason", "-"))
+top_avg = top_watch.get("avg_reservoir_rate", None)
+top_min = top_watch.get("min_reservoir_rate", None)
+
+if pd.notna(top_avg) and pd.notna(top_min):
+    top_msg = (
+        f"현재 전체 Watch 1위 지역은 **{top_sigungu}**입니다. "
+        f"Watch 단계는 **{top_level}**이며, 판정 사유는 **{top_reason}**입니다. "
+        f"평균 저수율은 **{float(top_avg):.1f}%**, 최저 저수율은 **{float(top_min):.1f}%**입니다."
+    )
+else:
+    top_msg = (
+        f"현재 전체 Watch 1위 지역은 **{top_sigungu}**입니다. "
+        f"Watch 단계는 **{top_level}**이며, 판정 사유는 **{top_reason}**입니다."
+    )
+
+if selected == top_sigungu:
+    top_msg += " 현재 선택 지역이 전체 1위입니다."
+else:
+    top_msg += f" 현재 선택 지역은 전체 {int(selected_watch['watch_rank'])}위입니다."
+
+st.success(top_msg)
 
 st.markdown(f"### {selected} Watch 판단 근거")
 
