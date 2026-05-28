@@ -237,10 +237,27 @@ def build_candidates_for_target(target_row, facilities, max_distance_km=120, top
 
     cand["recommendation_reason"] = cand.apply(build_reason, axis=1)
 
+    # 같은 저수지가 원천 데이터의 연도/버전 차이로 여러 번 들어오는 문제 제거
+    # 동일 target에 대해 같은 후보 저수지명 + 후보 시군 조합은 1개만 유지한다.
     cand = cand.sort_values(
         ["candidate_score", "candidate_reservoir_rate", "benefit_area", "effective_capacity"],
         ascending=[False, False, False, False]
     ).reset_index(drop=True)
+
+    before_dedup = len(cand)
+
+    cand = cand.drop_duplicates(
+        subset=["target_sigungu", "facility_name", "sigungu"],
+        keep="first"
+    ).reset_index(drop=True)
+
+    after_dedup = len(cand)
+
+    if before_dedup != after_dedup:
+        print(
+            f"  [DEDUP] {target_sigungu}: removed {before_dedup - after_dedup} duplicate reservoir rows",
+            flush=True
+        )
 
     cand["candidate_rank"] = np.arange(1, len(cand) + 1)
 
