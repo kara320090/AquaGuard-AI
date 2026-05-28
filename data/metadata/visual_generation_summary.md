@@ -2,13 +2,13 @@
 
 ## 생성 파일
 
-- final_risk_ranking: reports\figures\01_final_risk_ranking.png
-- risk_components_stacked: reports\figures\02_risk_components_stacked.png
-- risk_component_contributions: reports\tables\risk_component_contributions.csv
-- reservoir_vs_alternative_shortage_scatter: reports\figures\03_reservoir_vs_alternative_shortage_scatter.png
-- top5_priority_table_png: reports\figures\04_top5_priority_table.png
-- top_priority_summary_csv: reports\tables\top_priority_summary.csv
-- main_driver_summary: reports\tables\main_driver_summary.csv
+- final_risk_ranking: reports/figures/01_final_risk_ranking.png
+- risk_components_stacked: reports/figures/02_risk_components_stacked.png
+- risk_component_contributions: reports/tables/risk_component_contributions.csv
+- reservoir_vs_alternative_shortage_scatter: reports/figures/03_reservoir_vs_alternative_shortage_scatter.png
+- top5_priority_table_png: reports/figures/04_top5_priority_table.png
+- top_priority_summary_csv: reports/tables/top_priority_summary.csv
+- main_driver_summary: reports/tables/main_driver_summary.csv
 
 ## 우선 점검 대상 TOP 5
 
