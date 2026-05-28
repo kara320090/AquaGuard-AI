@@ -166,3 +166,39 @@ st.warning(
     "올담 저수지 데이터는 하루치 snapshot이므로 현재 저수율 갱신에는 사용 가능하지만, "
     "GRU 30일 시계열 추론에는 매일 snapshot이 30일 이상 누적된 이후 연결하는 것이 안전합니다."
 )
+
+
+st.markdown("### 저수율 교차검증: 올담 vs ADMS")
+
+crosscheck_path = REPORT_TABLES / "latest_reservoir_source_crosscheck.csv"
+adms_reservoir_status_path = REPORT_TABLES / "latest_adms_reservoir_support_status.csv"
+
+if adms_reservoir_status_path.exists():
+    adms_status = pd.read_csv(adms_reservoir_status_path)
+    st.caption("ADMS My 지역정보 기반 시·군별 저수율 보조 데이터 수집 상태")
+    st.dataframe(adms_status, use_container_width=True, hide_index=True)
+
+if crosscheck_path.exists():
+    cross = pd.read_csv(crosscheck_path)
+    show_cols = [
+        "sigungu",
+        "adms_rvow",
+        "adms_normal_rvow",
+        "adms_normal_ratio",
+        "oldam_avg_reservoir_rate",
+        "rvow_diff_oldam_minus_adms",
+        "crosscheck_status",
+    ]
+    show_cols = [c for c in show_cols if c in cross.columns]
+    renamed = cross[show_cols].rename(columns={
+        "sigungu": "시·군",
+        "adms_rvow": "ADMS 저수율",
+        "adms_normal_rvow": "ADMS 평년저수율",
+        "adms_normal_ratio": "평년대비 저수율",
+        "oldam_avg_reservoir_rate": "올담 평균 저수율",
+        "rvow_diff_oldam_minus_adms": "올담-ADMS 차이",
+        "crosscheck_status": "교차검증 상태",
+    })
+    st.dataframe(renamed, use_container_width=True, hide_index=True)
+else:
+    st.info("저수율 교차검증 파일이 없습니다. scripts/18_fetch_adms_reservoir_support.py를 실행하세요.")
