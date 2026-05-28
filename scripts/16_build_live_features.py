@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import pandas as pd
 import numpy as np
 
@@ -202,9 +202,14 @@ def build_live_features(base, oldam, kma):
 
     # 최신 강우 데이터가 있는 시군은 KMA 최근 30일 강우 부족도 사용, 없으면 기존 강우 부족도 fallback
     df["live_rain_shortage_score"] = df["latest_rain_shortage_score"].combine_first(df["rain_shortage_score"])
+    if "weather_data_status" in df.columns:
+        weather_status = df["weather_data_status"].fillna("KMA_WEATHER_30D").astype(str)
+    else:
+        weather_status = pd.Series("KMA_WEATHER_30D", index=df.index)
+
     df["live_weather_source"] = np.where(
         df["latest_rain_shortage_score"].notna(),
-        "KMA_ASOS_30D",
+        weather_status,
         "BASELINE_WEATHER",
     )
 
