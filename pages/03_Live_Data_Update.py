@@ -48,12 +48,13 @@ warning_count = summary[summary["final_live_water_risk_level"].isin(["주의", "
 
 oldam_count = int((live["live_reservoir_source"] == "OLDAM_TODAY").sum()) if "live_reservoir_source" in live.columns else 0
 kma_count = int((live["live_weather_source"] != "BASELINE_WEATHER").sum()) if "live_weather_source" in live.columns else 0
+soil_count = int((live["live_soil_source"] == "ADMS_SOIL_AUTO").sum()) if "live_soil_source" in live.columns else 0
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Live 평균 위험도", f"{avg_score:.1f}점")
 c2.metric("Live 주의 이상", f"{warning_count}곳")
 c3.metric("Live 최고 위험 지역", str(top["sigungu"]))
-c4.metric("최신 데이터 반영", f"저수지 {oldam_count} / 기상 {kma_count}곳")
+c4.metric("최신 데이터 반영", f"저수지 {oldam_count} / 기상 {kma_count} / 토양 {soil_count}곳")
 
 st.markdown("### 데이터 수집 상태")
 
@@ -92,6 +93,7 @@ fig = px.bar(
         "live_main_risk_driver",
         "live_weather_source",
         "live_reservoir_source",
+        "live_soil_source",
     ],
     title="올담 저수지 + 기상청 최근 30일 강수량 반영 Live 위험도",
 )
@@ -129,6 +131,10 @@ display = summary.rename(columns={
     "live_main_risk_driver": "주요 원인",
     "live_weather_source": "기상 데이터 소스",
     "live_reservoir_source": "저수지 데이터 소스",
+    "live_soil_source": "토양수분 데이터 소스",
+    "soil_data_date": "토양수분 기준일",
+    "soil_moisture_avg": "토양유효수분",
+    "soil_moisture_drought_score": "토양수분 가뭄도",
     "today_avg_reservoir_rate": "오늘 평균 저수율",
     "today_min_reservoir_rate": "오늘 최저 저수율",
     "today_reservoir_count": "올담 반영 저수지 수",

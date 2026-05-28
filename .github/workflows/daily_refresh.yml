@@ -36,6 +36,7 @@ jobs:
           python scripts/14_fetch_oldam_reservoir_today.py
           python scripts/15_fetch_kma_asos_daily_30d.py
           python scripts/15b_fetch_kma_aws_daily_30d.py
+          python scripts/17_fetch_adms_soil_moisture.py
           python scripts/16_build_live_features.py
           python scripts/07_build_final_features.py
           python scripts/09_generate_visuals.py
