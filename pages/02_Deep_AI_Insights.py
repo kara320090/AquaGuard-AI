@@ -17,6 +17,8 @@ META = ROOT / "data" / "metadata"
 SUMMARY_PATH = REPORT_TABLES / "ai_sigungu_deep_summary.csv"
 FORECAST_PATH = PROCESSED / "ai_gru_reservoir_forecast_by_sigungu.csv"
 ANOMALY_PATH = PROCESSED / "ai_autoencoder_anomaly_by_sigungu.csv"
+LIVE_SUMMARY_PATH = REPORT_TABLES / "latest_live_risk_summary.csv"
+TRAINING_DATA_PATH = PROCESSED / "01_reservoir_sigungu_daily.csv"
 GRU_HISTORY_PATH = REPORT_TABLES / "ai_gru_training_history.csv"
 AE_HISTORY_PATH = REPORT_TABLES / "ai_autoencoder_training_history.csv"
 REPORT_PATH = META / "deep_ai_model_report.md"
@@ -98,6 +100,22 @@ def format_value(value, suffix: str = "", decimals: int = 1) -> str:
     return str(value) if str(value) else "N/A"
 
 
+def safe_get(row: pd.Series, candidates: list[str], default=np.nan):
+    for col in candidates:
+        if col in row.index and pd.notna(row.get(col)):
+            return row.get(col)
+    return default
+
+
+def format_score(value, digits: int = 2) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    try:
+        return f"{float(value):,.{digits}f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 @st.cache_data(show_spinner=False)
 def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame, str | None]:
     path = Path(path_text)
@@ -156,6 +174,91 @@ def latest_date(df: pd.DataFrame, columns: list[str]) -> str:
     return max(dates).strftime("%Y-%m-%d")
 
 
+def months_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> list[str]:
+    months: set[str] = set()
+    for df in frames:
+        if df.empty:
+            continue
+        for col in columns:
+            if col in df.columns:
+                parsed = pd.to_datetime(df[col], errors="coerce").dropna()
+                months.update(parsed.dt.to_period("M").astype(str).tolist())
+    return sorted(months)
+
+
+def latest_month_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> str:
+    months = months_from_columns(frames, columns)
+    return months[-1] if months else "N/A"
+
+
+def current_month_from_live(live: pd.DataFrame) -> str:
+    live_month = latest_month_from_columns([live], ["soil_data_date", "date", "base_date", "target_date"])
+    if live_month != "N/A":
+        return live_month
+    return pd.Timestamp.today().to_period("M").strftime("%Y-%m")
+
+
+def select_default_ai_comparison_month(current_month: str, available_months: list[str]) -> tuple[str, bool]:
+    if not available_months or current_month == "N/A":
+        return "N/A", False
+
+    current = pd.Period(current_month, freq="M")
+    candidates = [pd.Period(month, freq="M") for month in available_months]
+    same_month_previous_years = [month for month in candidates if month.month == current.month and month.year < current.year]
+    if same_month_previous_years:
+        return str(max(same_month_previous_years)), False
+
+    previous_months = [month for month in candidates if month < current]
+    if previous_months:
+        nearest = min(previous_months, key=lambda month: abs(month.ordinal - current.ordinal))
+        return str(nearest), True
+
+    nearest = min(candidates, key=lambda month: abs(month.ordinal - current.ordinal))
+    return str(nearest), True
+
+
+def get_autoencoder_score_columns(df: pd.DataFrame) -> dict[str, str | None]:
+    raw_candidates = ["reconstruction_error", "autoencoder_reconstruction_error", "valid_recon_loss"]
+    score_candidates = ["autoencoder_anomaly_score", "anomaly_score"]
+    level_candidates = ["autoencoder_anomaly_level", "anomaly_level"]
+    return {
+        "raw": next((col for col in raw_candidates if col in df.columns), None),
+        "score": next((col for col in score_candidates if col in df.columns), None),
+        "level": next((col for col in level_candidates if col in df.columns), None),
+    }
+
+
+def attach_autoencoder_reconstruction(summary: pd.DataFrame, anomaly: pd.DataFrame) -> pd.DataFrame:
+    if summary.empty or anomaly.empty or "reconstruction_error" not in anomaly.columns or "reconstruction_error" in summary.columns:
+        return summary
+
+    join_cols = ["sigungu"]
+    if "base_date" in summary.columns and "base_date" in anomaly.columns:
+        join_cols.append("base_date")
+    raw = anomaly[join_cols + ["reconstruction_error"]].drop_duplicates(join_cols)
+    return summary.merge(raw, on=join_cols, how="left")
+
+
+def build_historical_month_snapshot(history: pd.DataFrame, comparison_month: str) -> pd.DataFrame:
+    if history.empty or comparison_month == "N/A" or "date" not in history.columns or "sigungu" not in history.columns:
+        return pd.DataFrame()
+
+    df = history.copy()
+    df["month"] = pd.to_datetime(df["date"], errors="coerce").dt.to_period("M").astype(str)
+    month_df = df[df["month"] == comparison_month]
+    if month_df.empty:
+        return pd.DataFrame()
+
+    agg_map = {}
+    for col in ["avg_reservoir_rate", "min_reservoir_rate", "reservoir_risk_score", "low_reservoir_count_30"]:
+        if col in month_df.columns:
+            agg_map[col] = "mean"
+    if not agg_map:
+        return pd.DataFrame()
+
+    return month_df.groupby("sigungu", as_index=False).agg(agg_map)
+
+
 def parse_report_metrics(report: str) -> dict[str, float]:
     metrics: dict[str, float] = {}
     mae = re.search(r"MAE:\s*([-+]?\d+(?:\.\d+)?)", report, flags=re.IGNORECASE)
@@ -204,7 +307,12 @@ def available_levels(summary: pd.DataFrame) -> list[str]:
     return [x for x in order if x in found] + sorted([x for x in found if x not in order])
 
 
-def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], int, str]:
+def render_sidebar(
+    summary: pd.DataFrame,
+    live_basis_month: str,
+    default_comparison_month: str,
+    month_options: list[str],
+) -> tuple[list[str], list[str], int, str, str]:
     regions = summary.sort_values("deep_ai_rank")["sigungu"].dropna().astype(str).tolist() if "deep_ai_rank" in summary.columns else sorted(summary["sigungu"].dropna().astype(str).tolist())
     levels = available_levels(summary)
     if "ai_region_filter" not in st.session_state:
@@ -221,10 +329,26 @@ def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], int, st
             st.session_state.ai_region_filter = regions
             st.session_state.ai_level_filter = levels
             st.session_state.ai_top_n = 10
+            st.session_state.ai_comparison_month = default_comparison_month
             st.rerun()
 
         st.markdown("#### 기간")
-        st.caption(f"기준일/예측일: {latest_date(summary, ['base_date', 'target_date'])}")
+        st.caption(f"Live 기준월: {live_basis_month}")
+        st.caption(f"모델 출력 기준일: {latest_date(summary, ['base_date', 'target_date'])}")
+        if "ai_comparison_month" not in st.session_state:
+            st.session_state.ai_comparison_month = default_comparison_month
+        st.session_state.ai_comparison_month = (
+            st.session_state.ai_comparison_month
+            if st.session_state.ai_comparison_month in month_options
+            else default_comparison_month
+        )
+        selected_comparison_month = st.selectbox(
+            "AI 비교 기준월",
+            month_options or ["N/A"],
+            index=(month_options.index(st.session_state.ai_comparison_month) if month_options and st.session_state.ai_comparison_month in month_options else 0),
+            key="ai_comparison_month",
+            help="Live 기준월과 계절성이 같은 전년도 동일 월을 우선 선택합니다.",
+        )
 
         st.markdown("#### 지역/대상")
         selected_regions = st.multiselect("시·군", regions, key="ai_region_filter")
@@ -235,7 +359,7 @@ def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], int, st
         max_top = max(5, min(14, len(summary))) if not summary.empty else 5
         top_n = st.slider("우선순위 표시 수", 5, max_top, min(st.session_state.get("ai_top_n", 10), max_top), key="ai_top_n")
 
-    return selected_regions, selected_levels, top_n, focus
+    return selected_regions, selected_levels, top_n, focus, selected_comparison_month
 
 
 def build_priority_table(summary: pd.DataFrame, top_n: int) -> pd.DataFrame:
@@ -248,6 +372,7 @@ def build_priority_table(summary: pd.DataFrame, top_n: int) -> pd.DataFrame:
         "deep_ai_risk_level",
         "forecast_drop_7d",
         "forecast_risk_score",
+        "reconstruction_error",
         "autoencoder_anomaly_score",
         "autoencoder_anomaly_level",
     ]
@@ -261,8 +386,9 @@ def build_priority_table(summary: pd.DataFrame, top_n: int) -> pd.DataFrame:
             "deep_ai_risk_level": "Deep AI 등급",
             "forecast_drop_7d": "예상 하락폭",
             "forecast_risk_score": "예측 위험도",
-            "autoencoder_anomaly_score": "이상점수",
-            "autoencoder_anomaly_level": "이상탐지 등급",
+            "reconstruction_error": "Reconstruction Loss",
+            "autoencoder_anomaly_score": "Anomaly Score",
+            "autoencoder_anomaly_level": "Anomaly Level",
         }
     )
 
@@ -334,12 +460,30 @@ def make_training_chart(gru_history: pd.DataFrame):
     return fig
 
 
+def make_historical_comparison_chart(month_snapshot: pd.DataFrame, top_n: int):
+    if month_snapshot.empty or "reservoir_risk_score" not in month_snapshot.columns:
+        return None
+    plot_df = month_snapshot.sort_values("reservoir_risk_score", ascending=False).head(top_n)
+    fig = px.bar(
+        plot_df.sort_values("reservoir_risk_score"),
+        x="reservoir_risk_score",
+        y="sigungu",
+        orientation="h",
+        hover_data=[c for c in ["avg_reservoir_rate", "min_reservoir_rate"] if c in plot_df.columns],
+        title="AI 비교 기준월의 저수율 위험도: 같은 계절에 어느 지역이 취약했는가?",
+    )
+    fig.update_layout(xaxis_title="저수율 위험점수", yaxis_title="시·군", height=max(360, 32 * len(plot_df) + 120))
+    return fig
+
+
 def main() -> None:
     inject_css()
 
     summary, summary_msg = safe_read_data(str(SUMMARY_PATH), required=True)
     forecast, forecast_msg = safe_read_data(str(FORECAST_PATH), required=False)
     anomaly, anomaly_msg = safe_read_data(str(ANOMALY_PATH), required=False)
+    live_summary, live_msg = safe_read_data(str(LIVE_SUMMARY_PATH), required=False)
+    training_history, training_msg = safe_read_data(str(TRAINING_DATA_PATH), required=False)
     gru_history, gru_msg = safe_read_data(str(GRU_HISTORY_PATH), required=False)
     ae_history, ae_msg = safe_read_data(str(AE_HISTORY_PATH), required=False)
     report, report_msg = read_text_file(str(REPORT_PATH))
@@ -363,19 +507,39 @@ def main() -> None:
     )
     forecast = normalize_numeric(forecast, ["current_avg_reservoir_rate", "pred_avg_reservoir_rate_7d", "forecast_drop_7d", "forecast_risk_score"])
     anomaly = normalize_numeric(anomaly, ["reconstruction_error", "autoencoder_anomaly_score"])
+    live_summary = normalize_numeric(live_summary, ["final_live_water_risk_score"])
+    training_history = normalize_numeric(training_history, ["avg_reservoir_rate", "min_reservoir_rate", "reservoir_risk_score", "low_reservoir_count_30"])
+    summary = attach_autoencoder_reconstruction(summary, anomaly)
+    summary = normalize_numeric(summary, ["reconstruction_error", "autoencoder_anomaly_score"])
     gru_history = normalize_numeric(gru_history, ["epoch", "train_loss", "valid_mae", "valid_r2"])
     ae_history = normalize_numeric(ae_history, ["epoch", "train_recon_loss", "valid_recon_loss"])
 
     best_model, main_metric, performance_cards = build_performance_cards(report, gru_history, ae_history)
-    latest_basis = latest_date(summary, ["base_date", "target_date"])
+    live_basis_month = current_month_from_live(live_summary)
+    live_basis_date = latest_date(live_summary, ["soil_data_date", "date", "base_date", "target_date"])
+    training_months = months_from_columns([training_history], ["date"])
+    ai_output_month = latest_month_from_columns([summary, forecast, anomaly], ["base_date", "target_date"])
+    training_final_month = training_months[-1] if training_months else ai_output_month
+    default_comparison_month, comparison_fallback = select_default_ai_comparison_month(live_basis_month, training_months)
+    month_options = training_months or ([ai_output_month] if ai_output_month != "N/A" else ["N/A"])
 
+    selected_regions, selected_levels, top_n, focus, selected_comparison_month = render_sidebar(
+        summary,
+        live_basis_month,
+        default_comparison_month,
+        month_options,
+    )
     render_page_header(
         "Deep AI 저수율 예측·이상탐지",
-        "GRU 7일 후 저수율 예측과 AutoEncoder 이상 패턴 탐지를 결합해 학습 기반 위험 신호를 확인합니다.",
-        latest_basis,
+        "GRU 7일 후 저수율 예측과 AutoEncoder 이상 패턴 탐지를 결합해 학습 기반 위험 신호와 계절 비교 기준을 확인합니다.",
+        f"Live 기준일 {live_basis_date} · AI 비교 기준월 {selected_comparison_month} · 학습 데이터 최종월 {training_final_month}",
     )
+    st.info("Live 데이터는 2026년 최신 공개 데이터를 사용하고, AI 해석은 학습 데이터 범위 내에서 계절성이 같은 전년도 동일 월을 기준으로 비교합니다.")
+    if ai_output_month != "N/A":
+        st.caption(f"현재 Deep AI 모델 출력 파일 기준월은 {ai_output_month}입니다. 2026년 Live 데이터를 직접 예측한 값으로 표시하지 않습니다.")
+    if comparison_fallback and selected_comparison_month == default_comparison_month:
+        st.warning(f"전년도 동일 월 데이터가 없어 가장 가까운 학습 데이터 월({selected_comparison_month})을 AI 비교 기준월로 사용합니다.")
 
-    selected_regions, selected_levels, top_n, focus = render_sidebar(summary)
     filtered = summary.copy()
     if selected_regions:
         filtered = filtered[filtered["sigungu"].isin(selected_regions)]
@@ -386,7 +550,8 @@ def main() -> None:
         f"""
         <div class="ag-filter">
         현재 필터: 지역 <b>{len(selected_regions) if selected_regions else 0}개</b> ·
-        Deep AI 등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> · 상세 대상 <b>{focus or "N/A"}</b>
+        Deep AI 등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> ·
+        AI 비교 기준월 <b>{selected_comparison_month}</b> · 상세 대상 <b>{focus or "N/A"}</b>
         </div>
         """,
         unsafe_allow_html=True,
@@ -404,6 +569,14 @@ def main() -> None:
             ("주요 성능 지표", main_metric, "존재하는 성능 지표만 표시합니다."),
         ]
     )
+    render_kpi_cards(
+        [
+            ("Live 기준일", live_basis_date, "Live/latest 공개 데이터에서 확인한 운영 기준일입니다."),
+            ("AI 비교 기준월", selected_comparison_month, "학습 데이터 범위에서 Live 기준월과 계절성이 같은 전년도 동일 월을 우선 선택합니다."),
+            ("학습 데이터 최종월", training_final_month, "AI 학습·비교에 쓰인 저수율 이력의 마지막 월입니다."),
+            ("모델 출력 기준월", ai_output_month, "현재 생성되어 있는 Deep AI 출력 파일의 실제 기준월입니다."),
+        ]
+    )
 
     if filtered.empty:
         render_empty_state()
@@ -415,6 +588,22 @@ def main() -> None:
         render_empty_state()
     else:
         st.dataframe(priority, use_container_width=True, hide_index=True)
+
+    render_section_header(
+        "AI 계절 비교 기준",
+        "현재 Live 월과 같은 계절의 학습 데이터 월을 골라 AI 해석의 계절 기준을 분리해서 보여줍니다.",
+    )
+    historical_snapshot = build_historical_month_snapshot(training_history, selected_comparison_month)
+    historical_fig = make_historical_comparison_chart(historical_snapshot, top_n)
+    if historical_fig:
+        st.plotly_chart(historical_fig, use_container_width=True)
+        st.caption(
+            f"{selected_comparison_month} 학습 데이터의 월평균 저수율 위험도입니다. Deep AI 출력값을 재계산하지 않고 계절 비교 기준으로만 사용합니다."
+        )
+        with st.expander(f"{selected_comparison_month} 학습 데이터 월별 요약 보기"):
+            st.dataframe(historical_snapshot, use_container_width=True, hide_index=True)
+    else:
+        st.warning(f"AI 비교 기준월에 맞는 학습 데이터가 없습니다: {selected_comparison_month}")
 
     render_section_header("성능 검증 요약", "리포트와 학습 이력에 실제 존재하는 성능 지표만 표시합니다.")
     if performance_cards:
@@ -455,17 +644,38 @@ def main() -> None:
     else:
         st.info("autoencoder_anomaly_score 컬럼이 없어 이상탐지 차트를 건너뛰었습니다.")
 
-    render_section_header(f"{focus} 상세 해석", "선택한 지역의 예측값과 이상탐지 결과를 한 줄로 설명합니다.")
-    focus_row = summary[summary["sigungu"] == focus]
+    render_section_header(f"{focus} 상세 해석", "선택한 지역의 예측값과 이상탐지 결과를 같은 행 기준으로 설명합니다.")
+    focus_row = filtered[filtered["sigungu"] == focus]
     if focus_row.empty:
-        render_empty_state()
+        st.warning(f"선택한 지역이 현재 필터 결과에 없습니다: {focus}")
     else:
         row = focus_row.iloc[0]
+        ae_cols = get_autoencoder_score_columns(filtered)
+        ae_raw = safe_get(row, [ae_cols["raw"]] if ae_cols["raw"] else [], default=np.nan)
+        ae_score = safe_get(row, [ae_cols["score"]] if ae_cols["score"] else [], default=np.nan)
+        ae_level = safe_get(row, [ae_cols["level"]] if ae_cols["level"] else [], default="N/A")
+        ae_cards = []
+        if ae_cols["raw"]:
+            ae_cards.append(("Reconstruction Loss", format_score(ae_raw, 4), "원본 AutoEncoder 재구성 오차입니다."))
+        else:
+            st.info("reconstruction_error 컬럼이 없어 Reconstruction Loss 표시는 건너뛰었습니다.")
+        if ae_cols["score"]:
+            ae_cards.append(("Anomaly Score", format_score(ae_score, 2), "대시보드에서 쓰는 정규화 이상점수입니다."))
+        else:
+            st.info("autoencoder_anomaly_score 컬럼이 없어 Anomaly Score 표시는 건너뛰었습니다.")
+        if ae_cols["level"]:
+            ae_cards.append(("Anomaly Level", str(ae_level), "선택한 행의 AutoEncoder 이상탐지 등급입니다."))
+        else:
+            st.info("autoencoder_anomaly_level 컬럼이 없어 Anomaly Level 표시는 건너뛰었습니다.")
+        if ae_cards:
+            render_kpi_cards(ae_cards)
+            st.caption("AutoEncoder 점수는 학습 데이터 패턴 대비 재구성 오차 기반 이상 신호이며, 수치가 높을수록 평소 패턴과 다름을 의미합니다.")
         st.success(
             f"{focus}의 Deep AI 위험도는 {format_value(row.get('deep_ai_risk_score'), '점', 1)}이며 "
             f"등급은 {row.get('deep_ai_risk_level', 'N/A')}입니다. "
             f"현재 평균 저수율 {format_value(row.get('current_avg_reservoir_rate'), '%', 1)}에서 "
-            f"7일 후 {format_value(row.get('pred_avg_reservoir_rate_7d'), '%', 1)}로 예측되었습니다."
+            f"7일 후 {format_value(row.get('pred_avg_reservoir_rate_7d'), '%', 1)}로 예측되었습니다. "
+            f"AutoEncoder Anomaly Score는 {format_score(ae_score, 2)}, Anomaly Level은 {ae_level}입니다."
         )
 
     render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 예측·이상탐지 원본 결과를 확인합니다.")
@@ -511,7 +721,7 @@ def main() -> None:
         "Deep AI 결과는 공개데이터 기반 예측·이상탐지 참고자료입니다. 실제 농업용수 대응 여부는 현장 저수율, "
         "관로, 수리권, 수질, 행정 협의를 함께 검토해야 합니다."
     )
-    show_messages([forecast_msg, anomaly_msg, gru_msg, ae_msg, report_msg])
+    show_messages([forecast_msg, anomaly_msg, live_msg, training_msg, gru_msg, ae_msg, report_msg])
 
 
 if __name__ == "__main__":

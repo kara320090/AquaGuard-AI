@@ -26,12 +26,21 @@ GRU_HISTORY_PATH = REPORT_TABLES / "ai_gru_training_history.csv"
 AE_HISTORY_PATH = REPORT_TABLES / "ai_autoencoder_training_history.csv"
 AI_REPORT_PATH = META / "deep_ai_model_report.md"
 VALIDATION_PATH = META / "final_validation_report.csv"
+TRAINING_DATA_PATH = PROCESSED / "01_reservoir_sigungu_daily.csv"
 
 FIG_RANKING = REPORT_FIGURES / "01_final_risk_ranking.png"
 FIG_COMPONENTS = REPORT_FIGURES / "02_risk_components_stacked.png"
 FIG_SCATTER = REPORT_FIGURES / "03_reservoir_vs_alternative_shortage_scatter.png"
 FIG_TOP5 = REPORT_FIGURES / "04_top5_priority_table.png"
 FIG_ALT = REPORT_FIGURES / "05_alternative_source_top1_by_risk_area.png"
+
+REPORT_FIGURES_LIST = [
+    ("01_final_risk_ranking.png", "시·군별 최종 위험도 순위"),
+    ("02_risk_components_stacked.png", "위험도 구성요소별 기여도"),
+    ("03_reservoir_vs_alternative_shortage_scatter.png", "저수율 위험도 vs 대체 수원 접근성 부족도"),
+    ("04_top5_priority_table.png", "우선 평가 대상 TOP 5"),
+    ("05_alternative_source_top1_by_risk_area.png", "위험지역별 1순위 대체 수원 후보"),
+]
 
 SIGUNGU_CENTROIDS = {
     "천안시": (36.8151, 127.1139),
@@ -247,6 +256,57 @@ def latest_date_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> 
     if not dates:
         return "N/A"
     return max(dates).strftime("%Y-%m-%d")
+
+
+def resolve_project_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def resolve_report_figure_path(filename: str) -> Path:
+    return resolve_project_root() / "reports" / "figures" / filename
+
+
+def months_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> list[str]:
+    months: set[str] = set()
+    for df in frames:
+        if df.empty:
+            continue
+        for col in columns:
+            if col in df.columns:
+                parsed = pd.to_datetime(df[col], errors="coerce").dropna()
+                months.update(parsed.dt.to_period("M").astype(str).tolist())
+    return sorted(months)
+
+
+def latest_month_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> str:
+    months = months_from_columns(frames, columns)
+    return months[-1] if months else "N/A"
+
+
+def current_month_from_live(live: pd.DataFrame) -> str:
+    live_month = latest_month_from_columns([live], ["soil_data_date", "date", "base_date", "target_date"])
+    if live_month != "N/A":
+        return live_month
+    return pd.Timestamp.today().to_period("M").strftime("%Y-%m")
+
+
+def select_default_ai_comparison_month(current_month: str, available_months: list[str]) -> tuple[str, bool]:
+    if not available_months or current_month == "N/A":
+        return "N/A", False
+
+    current = pd.Period(current_month, freq="M")
+    candidates = [pd.Period(month, freq="M") for month in available_months]
+    same_month_previous_years = [month for month in candidates if month.month == current.month and month.year < current.year]
+    if same_month_previous_years:
+        return str(max(same_month_previous_years)), False
+
+    previous_months = [month for month in candidates if month < current]
+    if previous_months:
+        nearest = min(previous_months, key=lambda month: abs(month.ordinal - current.ordinal))
+        return str(nearest), True
+
+    nearest = min(candidates, key=lambda month: abs(month.ordinal - current.ordinal))
+    return str(nearest), True
 
 
 def available_levels(df: pd.DataFrame, level_col: str = "risk_level") -> list[str]:
@@ -746,6 +806,7 @@ def main() -> None:
     gru_history, gru_msg = safe_read_data(str(GRU_HISTORY_PATH), required=False)
     ae_history, ae_msg = safe_read_data(str(AE_HISTORY_PATH), required=False)
     validation, validation_msg = safe_read_data(str(VALIDATION_PATH), required=False)
+    training_history, training_msg = safe_read_data(str(TRAINING_DATA_PATH), required=False)
     report_text, report_msg = read_text_file(str(AI_REPORT_PATH))
 
     show_load_messages([feature_msg], required_stop=True)
@@ -775,6 +836,12 @@ def main() -> None:
         ["deep_ai_rank", "deep_ai_risk_score", "current_avg_reservoir_rate", "pred_avg_reservoir_rate_7d"],
     )
 
+    live_basis_month = current_month_from_live(live_summary)
+    training_months = months_from_columns([training_history], ["date"])
+    ai_output_month = latest_month_from_columns([ai_summary], ["base_date", "target_date"])
+    training_final_month = training_months[-1] if training_months else ai_output_month
+    ai_comparison_month, ai_comparison_fallback = select_default_ai_comparison_month(live_basis_month, training_months)
+
     latest_basis = latest_date_from_columns(
         [features, live_summary, ai_summary],
         ["reservoir_latest_date", "weather_latest_date", "soil_data_date", "base_date", "target_date"],
@@ -784,8 +851,18 @@ def main() -> None:
     render_page_header(
         "충남 AquaGuard AI 농업용수 위험도 의사결정 대시보드",
         "기상·저수율·관정·작물·대체 수원 데이터를 기반으로 고위험 시·군과 점검 우선순위를 한눈에 확인합니다.",
-        latest_basis,
+        f"Live {live_basis_month} · AI 비교 {ai_comparison_month} · 학습 데이터 최종 {training_final_month}",
     )
+
+    st.info(
+        "Live 데이터는 2026년 최신 공개 데이터를 사용하고, AI 해석은 학습 데이터 범위 내에서 계절성이 같은 전년도 동일 월을 기준으로 비교합니다."
+    )
+    if ai_output_month != "N/A" and ai_output_month != ai_comparison_month:
+        st.caption(
+            f"현재 Deep AI 출력 파일 기준월은 {ai_output_month}입니다. 계절 비교 기준월 {ai_comparison_month}은 학습 데이터의 월별 기록에서 선택합니다."
+        )
+    if ai_comparison_fallback:
+        st.warning(f"전년도 동일 월 데이터가 없어 가장 가까운 학습 데이터 월({ai_comparison_month})을 AI 비교 기준월로 사용합니다.")
 
     mode, _all_regions, _levels, _top_n, _focus = render_sidebar(features)
     source_df = make_source_view(mode, features, live_summary, ai_summary)
@@ -815,8 +892,20 @@ def main() -> None:
         [
             ("분석 데이터 수", f"{total_records:,}건", "현재 필터 기준으로 표시되는 시·군 단위 결과 수입니다."),
             ("고위험 대상 수", f"{high_risk_count:,}곳", "위험등급이 주의·경계·심각·심각후보인 대상 수입니다."),
+            (
+                "우선 점검 대상",
+                "N/A" if filtered.empty else str(filtered.sort_values(["priority_rank", "risk_score"], ascending=[True, False]).iloc[0]["sigungu"]),
+                "현재 필터 기준으로 가장 먼저 확인할 대상입니다.",
+            ),
             ("최고 성능 모델", best_model, "성능 검증 파일에서 확인 가능한 모델명입니다."),
             ("주요 성능 지표", main_metric, "존재하는 검증 지표만 표시합니다."),
+        ]
+    )
+    render_kpi_cards(
+        [
+            ("Live 기준월", live_basis_month, "Live/latest 공개 데이터에서 확인한 운영 기준월입니다."),
+            ("AI 비교 기준월", ai_comparison_month, "학습 데이터 범위에서 Live 기준월과 계절성이 같은 전년도 동일 월을 우선 선택합니다."),
+            ("학습 데이터 최종월", training_final_month, "AI 학습·비교에 쓰인 저수율 이력의 마지막 월입니다."),
             ("최신 데이터 기준일", latest_period, "현재 분석 기준에서 확인 가능한 최신 날짜입니다."),
         ]
     )
@@ -950,17 +1039,12 @@ def main() -> None:
             st.dataframe(validation, use_container_width=True, hide_index=True)
 
     with st.expander("보고서용 이미지 확인"):
-        for path, caption in [
-            (FIG_RANKING, "시·군별 최종 위험도 순위"),
-            (FIG_COMPONENTS, "위험도 구성요소별 기여도"),
-            (FIG_SCATTER, "저수율 위험도 vs 대체 수원 접근성 부족도"),
-            (FIG_TOP5, "우선 평가 대상 TOP 5"),
-            (FIG_ALT, "위험지역별 1순위 대체 수원 후보"),
-        ]:
+        for filename, caption in REPORT_FIGURES_LIST:
+            path = resolve_report_figure_path(filename)
             if path.exists():
                 st.image(str(path), caption=caption, use_container_width=True)
             else:
-                st.info(f"이미지 파일이 없습니다: {path}")
+                st.warning(f"이미지 파일이 없습니다: {path}")
 
     render_section_header("설명 notes", "비기술 검토자가 볼 때 필요한 해석 기준만 짧게 남겼습니다.")
     st.info(
@@ -981,7 +1065,7 @@ def main() -> None:
             use_container_width=True,
         )
 
-    show_load_messages([candidate_msg, live_msg, ai_msg, gru_msg, ae_msg, validation_msg, report_msg])
+    show_load_messages([candidate_msg, live_msg, ai_msg, gru_msg, ae_msg, validation_msg, training_msg, report_msg])
 
 
 if __name__ == "__main__":
