@@ -28,6 +28,39 @@ def minmax_0_100(s):
     return ((s - mn) / (mx - mn) * 100).clip(0, 100)
 
 
+def rank_score_within_group(df, value_col, group_col="sigungu"):
+    if value_col not in df.columns or group_col not in df.columns:
+        return pd.Series(50.0, index=df.index)
+
+    values = to_num(df[value_col]).fillna(0)
+
+    def score_group(group):
+        group_values = values.loc[group.index]
+        if len(group_values) <= 1:
+            return pd.Series(100.0, index=group.index)
+        if group_values.max() == group_values.min():
+            return pd.Series(50.0, index=group.index)
+        ranks = group_values.rank(method="average", ascending=True)
+        return ((ranks - 1) / (len(group_values) - 1) * 100).clip(0, 100)
+
+    return df.groupby(group_col, group_keys=False).apply(score_group)
+
+
+def build_facility_priority_reason(row):
+    reasons = []
+    if row.get("benefit_area_rank_score", 0) >= 80:
+        reasons.append("수혜면적 상위 시설")
+    if row.get("effective_capacity_rank_score", 0) >= 80:
+        reasons.append("유효저수량 상위 시설")
+    if row.get("total_capacity_rank_score", 0) >= 80:
+        reasons.append("총저수량 상위 시설")
+    if pd.notna(row.get("sigungu_reservoir_risk_score")):
+        reasons.append("시·군 저수율 위험도 반영")
+    if not reasons:
+        reasons.append("시설 규모 정보 기반")
+    return " / ".join(reasons)
+
+
 def watch_level(row):
     min_rate = row.get("min_reservoir_rate", np.nan)
     avg_rate = row.get("avg_reservoir_rate", np.nan)
@@ -199,24 +232,49 @@ def build_facility_status(features, facilities):
         how="left"
     )
 
-    df["benefit_area_index"] = minmax_0_100(df.get("benefit_area", 0))
-    df["effective_capacity_index"] = minmax_0_100(df.get("effective_capacity", 0))
+    df["benefit_area_rank_score"] = rank_score_within_group(df, "benefit_area")
+    df["effective_capacity_rank_score"] = rank_score_within_group(df, "effective_capacity")
+    df["total_capacity_rank_score"] = rank_score_within_group(df, "total_capacity") if "total_capacity" in df.columns else 50.0
+
+    df["facility_scale_score"] = (
+        df["benefit_area_rank_score"] * 0.45
+        + df["effective_capacity_rank_score"] * 0.35
+        + df["total_capacity_rank_score"] * 0.20
+    ).clip(0, 100)
 
     df["inspection_priority_score"] = (
-        df["sigungu_reservoir_risk_score"].fillna(50) * 0.50
-        + df["benefit_area_index"] * 0.25
-        + df["effective_capacity_index"] * 0.25
+        df["sigungu_reservoir_risk_score"].fillna(50) * 0.40
+        + df["facility_scale_score"] * 0.60
     ).clip(0, 100)
+
+    df = df.sort_values(
+        ["sigungu", "inspection_priority_score", "benefit_area", "effective_capacity", "total_capacity"],
+        ascending=[True, False, False, False, False],
+    ).copy()
+    df["facility_priority_rank"] = df.groupby("sigungu").cumcount() + 1
+    group_size = df.groupby("sigungu")["facility_name"].transform("count")
+    top20_cutoff = np.ceil(group_size * 0.20).clip(lower=1)
+    df["facility_priority_level"] = np.select(
+        [
+            (df["facility_priority_rank"] <= top20_cutoff) | (df["inspection_priority_score"] >= 70),
+            df["inspection_priority_score"] >= 40,
+        ],
+        ["상", "중"],
+        default="하",
+    )
+    df["facility_priority_reason"] = df.apply(build_facility_priority_reason, axis=1)
 
     df["reservoir_status_note"] = df.apply(
         lambda r: "시군 저수율 위험 높음"
         if pd.notna(r.get("sigungu_reservoir_risk_score")) and r["sigungu_reservoir_risk_score"] >= 40
-        else "일반 모니터링",
+        else "시설 규모 기반 우선순위",
         axis=1
     )
 
     keep = [
         "sigungu",
+        "facility_priority_rank",
+        "facility_priority_level",
         "facility_name",
         "address",
         "benefit_area",
@@ -230,7 +288,12 @@ def build_facility_status(features, facilities):
         "sigungu_reservoir_risk_score",
         "sigungu_final_water_risk_score",
         "sigungu_final_water_risk_level",
+        "benefit_area_rank_score",
+        "effective_capacity_rank_score",
+        "total_capacity_rank_score",
+        "facility_scale_score",
         "inspection_priority_score",
+        "facility_priority_reason",
         "reservoir_status_note",
         "source_file",
     ]
@@ -246,8 +309,8 @@ def build_facility_status(features, facilities):
         print(f"[DEDUP final_output] removed={before_rows - len(out)}, rows={len(out)}")
 
     out = out.sort_values(
-        ["sigungu", "inspection_priority_score", "benefit_area", "effective_capacity"],
-        ascending=[True, False, False, False]
+        ["sigungu", "facility_priority_rank", "inspection_priority_score", "benefit_area", "effective_capacity"],
+        ascending=[True, True, False, False, False]
     ).reset_index(drop=True)
 
     return out
@@ -277,6 +340,7 @@ def write_method_doc():
 
 MVP 단계에서는 공개데이터 기반 규칙형 Watchlist로 구현한다.
 이는 실제 현장 이상 여부를 확정하는 기능이 아니라, 행정 담당자가 우선 점검할 후보를 좁히는 참고 지표이다.
+시설 점검 우선점수는 시설별 실시간 저수율이 아니라, 시·군 저수율 위험도와 시설 규모 정보를 결합한 행정 점검 우선순위이다.
 향후 장기 시계열이 충분히 확보되면 Isolation Forest, RandomForest, LightGBM 기반 이상탐지로 고도화할 수 있다.
 """
     path = META / "reservoir_watchlist_method.md"

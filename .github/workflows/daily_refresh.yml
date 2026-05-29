@@ -31,6 +31,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install Korean fonts for report figures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-nanum fonts-nanum-coding
+          sudo fc-cache -fv
+
       - name: Fetch live data and rebuild outputs
         run: |
           python scripts/07_build_final_features.py

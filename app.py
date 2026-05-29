@@ -172,6 +172,176 @@ def format_value(value, suffix: str = "", decimals: int = 1) -> str:
     return text if text else "N/A"
 
 
+RAW_MISSING_TEXT = {"", "-", "none", "nan", "nat", "<na>", "n/a"}
+DATE_DISPLAY_COLUMNS = {
+    "기준일",
+    "reservoir_latest_date",
+    "latest_measurement_date",
+    "soil_data_date",
+    "date",
+    "base_date",
+    "analysis_date",
+    "basis_date",
+    "target_date",
+}
+RESERVOIR_DATE_COLUMNS = {"기준일", "reservoir_latest_date", "latest_measurement_date", "basis_date"}
+ANALYSIS_BASIS_COLUMNS = ["분석 기준", "analysis_mode", "analysis_basis"]
+SCORE_DISPLAY_COLUMNS = {
+    "위험점수",
+    "risk_score",
+    "score",
+    "priority_score",
+    "autoencoder_anomaly_score",
+    "reconstruction_loss",
+    "후보점수",
+    "Deep AI 위험도",
+    "예측 위험도",
+    "Live 위험점수",
+    "기준 대비 변화",
+}
+MISSING_RESERVOIR_NOTE = (
+    "해당 시·군은 저수지 기준일 또는 시설 매칭 정보가 부족하여, "
+    "최종 위험도는 확보 가능한 강우·관정·작물·대체수원 지표 중심으로 산정했습니다."
+)
+
+
+def is_missing(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in RAW_MISSING_TEXT
+    try:
+        result = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    if isinstance(result, (bool, np.bool_)):
+        return bool(result)
+    return False
+
+
+def format_display_value(value, missing_label: str = "자료 없음") -> str:
+    if is_missing(value):
+        return missing_label
+    text = str(value).strip()
+    return text if text else missing_label
+
+
+def format_date_display(value, missing_label: str = "자료 없음") -> str:
+    if is_missing(value):
+        return missing_label
+    if isinstance(value, (datetime, pd.Timestamp, np.datetime64)):
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.notna(parsed):
+            return parsed.strftime("%Y-%m-%d")
+    return format_display_value(value, missing_label)
+
+
+def build_analysis_basis(row) -> str:
+    basis_value = next((row.get(col) for col in ANALYSIS_BASIS_COLUMNS if col in row.index), "최종 산정")
+    basis_text = format_display_value(basis_value, "최종 산정")
+    final_basis = is_missing(basis_value) or basis_text == "최종 산정"
+
+    has_missing_reservoir_date = any(
+        col in row.index and is_missing(row.get(col))
+        for col in ["reservoir_latest_date", "latest_measurement_date"]
+    )
+    has_missing_final_basis_date = any(
+        col in row.index and is_missing(row.get(col))
+        for col in ["기준일", "basis_date"]
+    ) and final_basis
+
+    if has_missing_reservoir_date or has_missing_final_basis_date:
+        return "최종 산정 · 저수지 기준일 미확보"
+    return basis_text if not is_missing(basis_text) else "최종 산정"
+
+
+def is_date_display_column(column: str) -> bool:
+    column_text = str(column)
+    lower = column_text.lower()
+    return column_text in DATE_DISPLAY_COLUMNS or lower in DATE_DISPLAY_COLUMNS or lower.endswith("_date")
+
+
+def is_reservoir_date_column(column: str) -> bool:
+    column_text = str(column)
+    return column_text in RESERVOIR_DATE_COLUMNS or column_text.lower() in RESERVOIR_DATE_COLUMNS
+
+
+def should_round_display_column(column: str) -> bool:
+    column_text = str(column)
+    lower = column_text.lower()
+    return (
+        column_text in SCORE_DISPLAY_COLUMNS
+        or lower in SCORE_DISPLAY_COLUMNS
+        or "score" in lower
+        or "loss" in lower
+        or "점수" in column_text
+        or "변화" in column_text
+    )
+
+
+def format_numeric_display(value, column: str) -> str:
+    if is_missing(value):
+        return "자료 없음"
+    if should_round_display_column(column):
+        try:
+            return f"{float(value):,.2f}"
+        except (TypeError, ValueError):
+            return format_display_value(value)
+    return format_display_value(value)
+
+
+def row_has_missing_reservoir_context(row) -> bool:
+    basis_value = next((row.get(col) for col in ANALYSIS_BASIS_COLUMNS if col in row.index), "최종 산정")
+    final_basis = is_missing(basis_value) or format_display_value(basis_value, "최종 산정") == "최종 산정"
+    if any(col in row.index and is_missing(row.get(col)) for col in ["reservoir_latest_date", "latest_measurement_date"]):
+        return True
+    if any(col in row.index and is_missing(row.get(col)) for col in ["기준일", "basis_date"]) and final_basis:
+        return True
+    return any(col in row.index and is_missing(row.get(col)) for col in ["reservoir_count", "저수지 수", "저수지수"])
+
+
+def has_missing_reservoir_context(df: pd.DataFrame) -> bool:
+    if df.empty:
+        return False
+    return bool(df.apply(row_has_missing_reservoir_context, axis=1).any())
+
+
+def render_missing_reservoir_note(df: pd.DataFrame) -> None:
+    if has_missing_reservoir_context(df):
+        st.info(MISSING_RESERVOIR_NOTE)
+
+
+def format_display_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    display_df = df.copy()
+    if display_df.empty:
+        return display_df
+
+    for basis_col in ANALYSIS_BASIS_COLUMNS:
+        if basis_col in display_df.columns:
+            display_df[basis_col] = df.apply(build_analysis_basis, axis=1)
+
+    for col in display_df.columns:
+        if col in ANALYSIS_BASIS_COLUMNS:
+            continue
+        if is_date_display_column(col):
+            missing_label = "저수지 기준일 없음" if is_reservoir_date_column(col) else "자료 없음"
+            display_df[col] = df[col].map(lambda value: format_date_display(value, missing_label))
+        elif should_round_display_column(col):
+            display_df[col] = df[col].map(lambda value: format_numeric_display(value, col))
+        else:
+            display_df[col] = df[col].map(format_display_value)
+
+    return display_df
+
+
+def prepare_main_detail_display(df: pd.DataFrame) -> pd.DataFrame:
+    display_df = format_display_dataframe(df)
+    priority_columns = ["시·군", "위험점수", "위험등급", "우선순위", "주요 위험 원인", "권고 조치", "기준일", "분석 기준"]
+    ordered = [col for col in priority_columns if col in display_df.columns]
+    ordered.extend([col for col in display_df.columns if col not in ordered])
+    return display_df[ordered]
+
+
 def safe_float(value, default: float | None = None) -> float | None:
     try:
         if pd.isna(value):
@@ -922,7 +1092,7 @@ def main() -> None:
     if priority_table.empty:
         render_empty_state()
     else:
-        st.dataframe(priority_table, use_container_width=True, hide_index=True)
+        st.dataframe(format_display_dataframe(priority_table), use_container_width=True, hide_index=True)
 
     render_section_header(
         "성능 검증 요약",
@@ -973,6 +1143,19 @@ def main() -> None:
         else:
             st.info("구성요소 점수 컬럼이 없어 상세 구성 차트를 건너뛰었습니다.")
 
+    focus_row = filtered[filtered["sigungu"] == focus_target]
+    if not focus_row.empty and has_missing_reservoir_context(focus_row):
+        render_missing_reservoir_note(focus_row)
+        row = focus_row.iloc[0]
+        st.caption(
+            " · ".join(
+                [
+                    f"기준일: {format_date_display(row.get('basis_date'), '저수지 기준일 없음')}",
+                    f"분석 기준: {build_analysis_basis(row)}",
+                ]
+            )
+        )
+
     ai_fig = make_ai_scatter(ai_summary)
     if ai_fig:
         st.plotly_chart(ai_fig, use_container_width=True)
@@ -986,7 +1169,7 @@ def main() -> None:
     if focus_candidates.empty:
         st.info("조건에 맞는 대체 수원 후보 데이터가 없습니다.")
     else:
-        st.dataframe(candidate_display(focus_candidates), use_container_width=True, hide_index=True)
+        st.dataframe(format_display_dataframe(candidate_display(focus_candidates)), use_container_width=True, hide_index=True)
         st.download_button(
             label=f"{focus_target} 대체 수원 후보 CSV 다운로드",
             data=focus_candidates.to_csv(index=False).encode("utf-8-sig"),
@@ -1008,10 +1191,11 @@ def main() -> None:
             "analysis_mode": "분석 기준",
         }
     )
-    st.dataframe(detailed, use_container_width=True, hide_index=True)
+    render_missing_reservoir_note(detailed)
+    st.dataframe(prepare_main_detail_display(detailed), use_container_width=True, hide_index=True)
 
     with st.expander("원본 최종 산정 결과 보기"):
-        st.dataframe(features, use_container_width=True, hide_index=True)
+        st.dataframe(format_display_dataframe(features), use_container_width=True, hide_index=True)
         st.download_button(
             label="최종 산정 결과 CSV 다운로드",
             data=features.to_csv(index=False).encode("utf-8-sig"),
@@ -1023,12 +1207,12 @@ def main() -> None:
     with st.expander("성능 검증·학습 이력 원본 보기"):
         if not gru_history.empty:
             st.markdown("#### GRU 학습 이력")
-            st.dataframe(gru_history, use_container_width=True, hide_index=True)
+            st.dataframe(format_display_dataframe(gru_history), use_container_width=True, hide_index=True)
         else:
             st.info("GRU 학습 이력 파일이 없습니다.")
         if not ae_history.empty:
             st.markdown("#### AutoEncoder 학습 이력")
-            st.dataframe(ae_history, use_container_width=True, hide_index=True)
+            st.dataframe(format_display_dataframe(ae_history), use_container_width=True, hide_index=True)
         else:
             st.info("AutoEncoder 학습 이력 파일이 없습니다.")
         if report_text:
@@ -1036,7 +1220,7 @@ def main() -> None:
             st.markdown(report_text)
         if not validation.empty:
             st.markdown("#### 최종 검증 체크 결과")
-            st.dataframe(validation, use_container_width=True, hide_index=True)
+            st.dataframe(format_display_dataframe(validation), use_container_width=True, hide_index=True)
 
     with st.expander("보고서용 이미지 확인"):
         for filename, caption in REPORT_FIGURES_LIST:

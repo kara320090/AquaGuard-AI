@@ -8,6 +8,7 @@
 - reservoir_vs_alternative_shortage_scatter: reports/figures/03_reservoir_vs_alternative_shortage_scatter.png
 - top5_priority_table_png: reports/figures/04_top5_priority_table.png
 - top_priority_summary_csv: reports/tables/top_priority_summary.csv
+- alternative_source_top1_by_risk_area: reports/figures/05_alternative_source_top1_by_risk_area.png
 - main_driver_summary: reports/tables/main_driver_summary.csv
 
 ## 우선 점검 대상 TOP 5

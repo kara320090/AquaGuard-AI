@@ -93,6 +93,161 @@ def format_value(value, suffix: str = "", decimals: int = 1) -> str:
     return str(value) if str(value) else "N/A"
 
 
+RAW_MISSING_TEXT = {"", "-", "none", "nan", "nat", "<na>", "n/a"}
+DATE_DISPLAY_COLUMNS = {
+    "기준일",
+    "reservoir_latest_date",
+    "latest_measurement_date",
+    "soil_data_date",
+    "date",
+    "base_date",
+    "analysis_date",
+}
+RESERVOIR_DATE_COLUMNS = {"기준일", "reservoir_latest_date", "latest_measurement_date"}
+ANALYSIS_BASIS_COLUMNS = ["분석 기준", "analysis_mode", "analysis_basis"]
+SCORE_DISPLAY_COLUMNS = {
+    "위험점수",
+    "risk_score",
+    "score",
+    "priority_score",
+    "facility_scale_score",
+    "reservoir_risk_score",
+    "inspection_priority_score",
+    "저수율 위험점수",
+    "시설 규모점수",
+    "시설 점검 우선점수",
+}
+MISSING_RESERVOIR_NOTE = (
+    "해당 시·군은 저수지 기준일 또는 시설 매칭 정보가 부족하여, "
+    "최종 위험도는 확보 가능한 강우·관정·작물·대체수원 지표 중심으로 산정했습니다."
+)
+
+
+def is_missing(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value.strip().lower() in RAW_MISSING_TEXT
+    try:
+        result = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    if isinstance(result, (bool, np.bool_)):
+        return bool(result)
+    return False
+
+
+def format_display_value(value, missing_label: str = "자료 없음") -> str:
+    if is_missing(value):
+        return missing_label
+    text = str(value).strip()
+    return text if text else missing_label
+
+
+def format_date_display(value, missing_label: str = "자료 없음") -> str:
+    if is_missing(value):
+        return missing_label
+    if isinstance(value, (pd.Timestamp, np.datetime64)):
+        parsed = pd.to_datetime(value, errors="coerce")
+        if pd.notna(parsed):
+            return parsed.strftime("%Y-%m-%d")
+    return format_display_value(value, missing_label)
+
+
+def build_analysis_basis(row) -> str:
+    basis_value = next((row.get(col) for col in ANALYSIS_BASIS_COLUMNS if col in row.index), "최종 산정")
+    basis_text = format_display_value(basis_value, "최종 산정")
+    final_basis = is_missing(basis_value) or basis_text == "최종 산정"
+    has_missing_reservoir_date = any(
+        col in row.index and is_missing(row.get(col))
+        for col in ["reservoir_latest_date", "latest_measurement_date"]
+    )
+    has_missing_final_basis_date = any(
+        col in row.index and is_missing(row.get(col))
+        for col in ["기준일", "basis_date"]
+    ) and final_basis
+    if has_missing_reservoir_date or has_missing_final_basis_date:
+        return "최종 산정 · 저수지 기준일 미확보"
+    return basis_text if not is_missing(basis_text) else "최종 산정"
+
+
+def is_date_display_column(column: str) -> bool:
+    column_text = str(column)
+    lower = column_text.lower()
+    return column_text in DATE_DISPLAY_COLUMNS or lower in DATE_DISPLAY_COLUMNS or lower.endswith("_date")
+
+
+def is_reservoir_date_column(column: str) -> bool:
+    column_text = str(column)
+    return column_text in RESERVOIR_DATE_COLUMNS or column_text.lower() in RESERVOIR_DATE_COLUMNS
+
+
+def should_round_display_column(column: str) -> bool:
+    column_text = str(column)
+    lower = column_text.lower()
+    return (
+        column_text in SCORE_DISPLAY_COLUMNS
+        or lower in SCORE_DISPLAY_COLUMNS
+        or "score" in lower
+        or "점수" in column_text
+        or "저수율" in column_text
+    )
+
+
+def format_numeric_display(value, column: str) -> str:
+    if is_missing(value):
+        return "자료 없음"
+    if should_round_display_column(column):
+        try:
+            return f"{float(value):,.2f}"
+        except (TypeError, ValueError):
+            return format_display_value(value)
+    return format_display_value(value)
+
+
+def row_has_missing_reservoir_context(row) -> bool:
+    basis_value = next((row.get(col) for col in ANALYSIS_BASIS_COLUMNS if col in row.index), "최종 산정")
+    final_basis = is_missing(basis_value) or format_display_value(basis_value, "최종 산정") == "최종 산정"
+    if any(col in row.index and is_missing(row.get(col)) for col in ["reservoir_latest_date", "latest_measurement_date"]):
+        return True
+    if any(col in row.index and is_missing(row.get(col)) for col in ["기준일", "basis_date"]) and final_basis:
+        return True
+    return any(col in row.index and is_missing(row.get(col)) for col in ["reservoir_count", "저수지 수", "저수지수"])
+
+
+def has_missing_reservoir_context(df: pd.DataFrame) -> bool:
+    if df.empty:
+        return False
+    return bool(df.apply(row_has_missing_reservoir_context, axis=1).any())
+
+
+def render_missing_reservoir_note(df: pd.DataFrame) -> None:
+    if has_missing_reservoir_context(df):
+        st.info(MISSING_RESERVOIR_NOTE)
+
+
+def format_display_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    display_df = df.copy()
+    if display_df.empty:
+        return display_df
+
+    for basis_col in ANALYSIS_BASIS_COLUMNS:
+        if basis_col in display_df.columns:
+            display_df[basis_col] = df.apply(build_analysis_basis, axis=1)
+
+    for col in display_df.columns:
+        if col in ANALYSIS_BASIS_COLUMNS:
+            continue
+        if is_date_display_column(col):
+            missing_label = "저수지 기준일 없음" if is_reservoir_date_column(col) else "자료 없음"
+            display_df[col] = df[col].map(lambda value: format_date_display(value, missing_label))
+        elif should_round_display_column(col):
+            display_df[col] = df[col].map(lambda value: format_numeric_display(value, col))
+        else:
+            display_df[col] = df[col].map(format_display_value)
+    return display_df
+
+
 @st.cache_data(show_spinner=False)
 def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame, str | None]:
     path = Path(path_text)
@@ -154,6 +309,52 @@ def prepare_facility(facility: pd.DataFrame, sigungu: str) -> tuple[pd.DataFrame
     return selected, before - len(selected)
 
 
+def attach_latest_oldam_to_facilities(facility: pd.DataFrame, oldam_today: pd.DataFrame, sigungu: str) -> pd.DataFrame:
+    out = facility.copy()
+    out["facility_latest_reservoir_rate"] = np.nan
+    out["facility_latest_date"] = np.nan
+    if out.empty or oldam_today.empty or "facility_name" not in out.columns or "facility_name" not in oldam_today.columns:
+        return out
+
+    latest = oldam_today.copy()
+    if "sigungu" in latest.columns:
+        latest = latest[latest["sigungu"] == sigungu].copy()
+    if latest.empty:
+        return out
+
+    latest["_facility_key"] = latest["facility_name"].fillna("").astype(str).str.strip()
+    out["_facility_key"] = out["facility_name"].fillna("").astype(str).str.strip()
+
+    if "date" in latest.columns:
+        latest["_date_sort"] = pd.to_datetime(latest["date"], errors="coerce")
+        latest = latest.sort_values("_date_sort", ascending=False)
+    latest = latest.drop_duplicates("_facility_key", keep="first")
+
+    rate_map = latest.set_index("_facility_key")["reservoir_rate"] if "reservoir_rate" in latest.columns else pd.Series(dtype=float)
+    date_map = latest.set_index("_facility_key")["date"] if "date" in latest.columns else pd.Series(dtype=object)
+    out["facility_latest_reservoir_rate"] = out["_facility_key"].map(rate_map)
+    out["facility_latest_date"] = out["_facility_key"].map(date_map)
+    return out.drop(columns=["_facility_key"], errors="ignore")
+
+
+def render_selected_region_summary(watch: pd.DataFrame, focus: str) -> None:
+    selected = watch[watch["sigungu"] == focus] if "sigungu" in watch.columns else pd.DataFrame()
+    if selected.empty:
+        st.info("선택한 시·군의 Watchlist 요약 정보가 없습니다.")
+        return
+
+    row = selected.iloc[0]
+    render_kpi_cards(
+        [
+            ("시·군 평균 저수율", format_value(row.get("avg_reservoir_rate"), "%", 1), "지역 공통 저수율 지표입니다."),
+            ("시·군 최저 저수율", format_value(row.get("min_reservoir_rate"), "%", 1), "지역 내 최저 저수율입니다."),
+            ("시·군 저수율 위험도", format_value(row.get("reservoir_risk_score"), "점", 1), "지역 단위 저수율 위험 점수입니다."),
+            ("Watch 단계", format_display_value(row.get("watch_level")), "Watchlist 판정 단계입니다."),
+        ]
+    )
+    st.markdown(f"**Watch 판정 사유:** {format_display_value(row.get('watch_reason'))}")
+
+
 def make_watch_priority_table(watch: pd.DataFrame, top_n: int) -> pd.DataFrame:
     if watch.empty:
         return pd.DataFrame()
@@ -187,28 +388,40 @@ def make_facility_priority_table(facility: pd.DataFrame, top_n: int) -> pd.DataF
     if facility.empty:
         return pd.DataFrame()
     cols = [
+        "facility_priority_rank",
+        "facility_priority_level",
         "facility_name",
         "address",
         "benefit_area",
         "effective_capacity",
-        "sigungu_avg_reservoir_rate",
-        "sigungu_min_reservoir_rate",
+        "total_capacity",
+        "facility_latest_reservoir_rate",
+        "facility_latest_date",
+        "facility_scale_score",
         "inspection_priority_score",
+        "facility_priority_reason",
         "reservoir_status_note",
     ]
     cols = [c for c in cols if c in facility.columns]
     out = facility[cols].copy()
-    if "inspection_priority_score" in out.columns:
+    if "facility_priority_rank" in out.columns:
+        out = out.sort_values("facility_priority_rank")
+    elif "inspection_priority_score" in out.columns:
         out = out.sort_values("inspection_priority_score", ascending=False)
     return out.head(top_n).rename(
         columns={
+            "facility_priority_rank": "시설 점검 순위",
+            "facility_priority_level": "시설 우선등급",
             "facility_name": "저수지명",
             "address": "주소",
             "benefit_area": "수혜면적",
             "effective_capacity": "유효저수량",
-            "sigungu_avg_reservoir_rate": "시·군 평균 저수율",
-            "sigungu_min_reservoir_rate": "시·군 최저 저수율",
+            "total_capacity": "총저수량",
+            "facility_latest_reservoir_rate": "시설별 최신 공개 저수율",
+            "facility_latest_date": "시설별 기준일",
+            "facility_scale_score": "시설 규모점수",
             "inspection_priority_score": "시설 점검 우선점수",
+            "facility_priority_reason": "우선순위 사유",
             "reservoir_status_note": "상태 메모",
         }
     )
@@ -319,12 +532,16 @@ def main() -> None:
     facility = normalize_numeric(
         facility,
         [
+            "facility_priority_rank",
             "benefit_area",
             "effective_capacity",
             "total_capacity",
             "sigungu_avg_reservoir_rate",
             "sigungu_min_reservoir_rate",
+            "sigungu_reservoir_risk_score",
+            "facility_scale_score",
             "inspection_priority_score",
+            "facility_latest_reservoir_rate",
         ],
     )
 
@@ -370,7 +587,7 @@ def main() -> None:
         st.stop()
 
     render_section_header("점검 우선순위", "저수율 위험점수가 높고 Watch 순위가 빠른 시·군을 먼저 확인합니다.")
-    st.dataframe(make_watch_priority_table(filtered, top_n), use_container_width=True, hide_index=True)
+    st.dataframe(format_display_dataframe(make_watch_priority_table(filtered, top_n)), use_container_width=True, hide_index=True)
 
     render_section_header("저수율 위험도 해석", "평균과 최저 저수율을 함께 보며 지역 단위 위험을 확인합니다.")
     left, right = st.columns(2)
@@ -390,13 +607,23 @@ def main() -> None:
             st.info("평균·최저 저수율 컬럼이 없어 비교 차트를 건너뛰었습니다.")
 
     selected_facility, removed_duplicates = prepare_facility(facility, focus)
-    render_section_header(f"{focus} 시설 점검 우선순위", "선택한 시·군 안에서 먼저 확인할 저수지 시설입니다.")
-    facility_top = make_facility_priority_table(selected_facility, top_n)
+    facility_for_table = attach_latest_oldam_to_facilities(selected_facility, oldam_today, focus)
+    render_section_header(f"{focus} 시설별 점검 우선순위", "선택한 시·군 안에서 먼저 확인할 저수지 시설입니다.")
+    render_selected_region_summary(watch, focus)
+    st.caption(
+        "아래 시설 표의 우선순위는 시·군 위험도와 시설 규모 정보를 결합한 점검 우선순위입니다. "
+        "시·군 평균/최저 저수율은 지역 공통 지표이므로 시설별 행에 반복 표시하지 않습니다."
+    )
+    st.info("시설 점검 우선점수는 시설별 실시간 저수율이 아니라, 시·군 저수율 위험도와 시설 규모 정보를 결합한 행정 점검 우선순위입니다.")
+    if "facility_latest_reservoir_rate" in facility_for_table.columns and facility_for_table["facility_latest_reservoir_rate"].isna().all():
+        st.info("시설별 최신 저수율은 원천 데이터에서 직접 제공되지 않아, 시·군 단위 저수율과 시설 규모를 결합해 우선순위를 산정했습니다.")
+
+    facility_top = make_facility_priority_table(facility_for_table, top_n)
     if facility_top.empty:
         render_empty_state("선택한 시·군의 저수지 시설 정보가 없습니다.")
     else:
-        st.caption(f"표시 시설 {len(selected_facility):,}개" + (f" · 중복 제거 {removed_duplicates:,}개" if removed_duplicates else ""))
-        st.dataframe(facility_top, use_container_width=True, hide_index=True)
+        st.caption(f"표시 시설 {len(facility_for_table):,}개" + (f" · 중복 제거 {removed_duplicates:,}개" if removed_duplicates else ""))
+        st.dataframe(format_display_dataframe(facility_top), use_container_width=True, hide_index=True)
 
     if not oldam_today.empty and "sigungu" in oldam_today.columns:
         render_section_header("올담 최신 공개 저수지 현황", "최신 공개 snapshot에 포함된 시설만 표시합니다.")
@@ -415,13 +642,17 @@ def main() -> None:
                 }
             )
             sort_col = "최신 공개 저수율" if "최신 공개 저수율" in oldam_view.columns else oldam_view.columns[0]
-            st.dataframe(oldam_view.sort_values(sort_col), use_container_width=True, hide_index=True)
+            oldam_sorted = oldam_view.sort_values(sort_col)
+            render_missing_reservoir_note(oldam_sorted)
+            st.dataframe(format_display_dataframe(oldam_sorted), use_container_width=True, hide_index=True)
     else:
         st.info(f"선택 데이터 파일이 없습니다: {OLDAM_TODAY_PATH}")
 
     render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 원본 Watchlist와 시설 목록을 확인합니다.")
     with st.expander("Watchlist 전체 보기", expanded=True):
-        st.dataframe(filtered.sort_values("watch_rank"), use_container_width=True, hide_index=True)
+        watch_display = filtered.sort_values("watch_rank")
+        render_missing_reservoir_note(watch_display)
+        st.dataframe(format_display_dataframe(watch_display), use_container_width=True, hide_index=True)
         st.download_button(
             label="Watchlist CSV 다운로드",
             data=filtered.to_csv(index=False).encode("utf-8-sig"),
@@ -430,13 +661,14 @@ def main() -> None:
             use_container_width=True,
         )
     with st.expander(f"{focus} 저수지 시설 전체 보기"):
-        if selected_facility.empty:
+        if facility_for_table.empty:
             render_empty_state("조건에 맞는 데이터가 없습니다")
         else:
-            st.dataframe(selected_facility, use_container_width=True, hide_index=True)
+            facility_detail = make_facility_priority_table(facility_for_table, len(facility_for_table))
+            st.dataframe(format_display_dataframe(facility_detail), use_container_width=True, hide_index=True)
             st.download_button(
                 label=f"{focus} 저수지 시설 CSV 다운로드",
-                data=selected_facility.to_csv(index=False).encode("utf-8-sig"),
+                data=facility_for_table.to_csv(index=False).encode("utf-8-sig"),
                 file_name=f"{focus}_reservoir_facility_status.csv",
                 mime="text/csv",
                 use_container_width=True,

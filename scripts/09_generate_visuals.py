@@ -1,5 +1,6 @@
 ﻿from pathlib import Path
 import pandas as pd
+import textwrap
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
@@ -28,24 +29,34 @@ PDF_COMPONENTS = [
 LEVEL_ORDER = ["낮음", "주의", "경계", "심각"]
 
 
-def setup_korean_font():
+def setup_korean_font() -> str | None:
     candidates = [
         "Malgun Gothic",
-        "맑은 고딕",
-        "AppleGothic",
         "NanumGothic",
+        "Nanum Gothic",
         "Noto Sans CJK KR",
-        "Noto Sans KR",
+        "AppleGothic",
     ]
 
-    installed = {f.name for f in fm.fontManager.ttflist}
+    def normalize(name: str) -> str:
+        return "".join(ch for ch in name.lower() if ch.isalnum())
 
-    for font in candidates:
-        if font in installed:
-            plt.rcParams["font.family"] = font
-            break
+    installed_fonts: dict[str, str] = {}
+    for font in fm.fontManager.ttflist:
+        font_name = getattr(font, "name", "")
+        if font_name:
+            installed_fonts.setdefault(normalize(font_name), font_name)
 
     plt.rcParams["axes.unicode_minus"] = False
+    for candidate in candidates:
+        selected = installed_fonts.get(normalize(candidate))
+        if selected:
+            plt.rcParams["font.family"] = selected
+            print(f"[FONT] Korean font selected: {selected}")
+            return selected
+
+    print("[WARN] No Korean font found. Korean text may render as tofu boxes.")
+    return None
 
 
 def read_features():
@@ -280,28 +291,33 @@ def save_top5_table_image(df):
     }
 
     top = top.rename(columns=rename)
+    display_top = top.copy()
+    for col in ["주요 원인", "권고 조치"]:
+        if col in display_top.columns:
+            display_top[col] = display_top[col].map(lambda value: textwrap.fill(str(value), width=18))
 
-    fig, ax = plt.subplots(figsize=(14, 4.8))
+    fig, ax = plt.subplots(figsize=(16, 5.2))
     ax.axis("off")
 
     table = ax.table(
-        cellText=top.values,
-        colLabels=top.columns,
+        cellText=display_top.values,
+        colLabels=display_top.columns,
         cellLoc="center",
         colLoc="center",
         loc="center",
+        colWidths=[0.07, 0.10, 0.10, 0.10, 0.25, 0.38],
     )
 
     table.auto_set_font_size(False)
     table.set_fontsize(9)
-    table.scale(1, 1.6)
+    table.scale(1, 1.9)
 
     for (row, col), cell in table.get_celld().items():
         if row == 0:
             cell.set_text_props(weight="bold")
             cell.set_facecolor("#e6e6e6")
         else:
-            level = top.iloc[row - 1]["단계"]
+            level = display_top.iloc[row - 1]["단계"]
             if col == 3:
                 cell.set_facecolor(risk_level_color(level))
 
@@ -316,6 +332,65 @@ def save_top5_table_image(df):
     top.to_csv(csv_out, index=False, encoding="utf-8-sig")
 
     return out, csv_out
+
+
+def save_alternative_source_top1_figure():
+    source = TABLE_DIR / "alternative_source_top5_by_sigungu.csv"
+    if not source.exists():
+        print(f"[WARN] Alternative source table missing; skipped figure: {source}")
+        return None
+
+    recommendations = pd.read_csv(source)
+    required = [
+        "target_sigungu",
+        "target_final_water_risk_score",
+        "candidate_rank",
+        "candidate_reservoir_name",
+        "candidate_score",
+    ]
+    missing = [col for col in required if col not in recommendations.columns]
+    if missing:
+        print(f"[WARN] Alternative source table missing columns; skipped figure: {missing}")
+        return None
+
+    top_targets = (
+        recommendations[pd.to_numeric(recommendations["candidate_rank"], errors="coerce") == 1]
+        .copy()
+    )
+    top_targets["target_final_water_risk_score"] = pd.to_numeric(
+        top_targets["target_final_water_risk_score"], errors="coerce"
+    )
+    top_targets["candidate_score"] = pd.to_numeric(top_targets["candidate_score"], errors="coerce")
+    top_targets = top_targets.sort_values("target_final_water_risk_score", ascending=False).head(5)
+
+    if top_targets.empty:
+        print(f"[WARN] Alternative source table has no rank-1 rows; skipped figure: {source}")
+        return None
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+
+    labels = [
+        f"{row['target_sigungu']} → {row['candidate_reservoir_name']}"
+        for _, row in top_targets.iterrows()
+    ]
+    scores = top_targets["candidate_score"].astype(float)
+
+    ax.barh(labels[::-1], scores[::-1])
+    ax.set_title("위험지역별 1순위 대체 수원 후보", fontsize=16, fontweight="bold", pad=14)
+    ax.set_xlabel("후보 적합도 점수")
+    ax.set_xlim(0, max(100, scores.max() * 1.15))
+    ax.grid(axis="x", alpha=0.25)
+
+    for idx, score in enumerate(scores[::-1]):
+        ax.text(score + 1, idx, f"{score:.1f}", va="center", fontsize=9)
+
+    fig.tight_layout()
+
+    out = FIG_DIR / "05_alternative_source_top1_by_risk_area.png"
+    fig.savefig(out, dpi=220, bbox_inches="tight")
+    plt.close(fig)
+
+    return out
 
 
 def save_main_driver_summary(df):
@@ -343,7 +418,7 @@ def save_markdown_summary(df, outputs):
     lines.append("")
 
     for name, path in outputs.items():
-        lines.append(f"- {name}: {path.relative_to(ROOT)}")
+        lines.append(f"- {name}: {path.relative_to(ROOT).as_posix()}")
 
     lines.append("")
     lines.append("## 우선 점검 대상 TOP 5")
@@ -388,6 +463,10 @@ def main():
     top5_png, top5_csv = save_top5_table_image(df)
     outputs["top5_priority_table_png"] = top5_png
     outputs["top_priority_summary_csv"] = top5_csv
+
+    alt_png = save_alternative_source_top1_figure()
+    if alt_png:
+        outputs["alternative_source_top1_by_risk_area"] = alt_png
 
     outputs["main_driver_summary"] = save_main_driver_summary(df)
 

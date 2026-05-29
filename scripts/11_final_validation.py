@@ -54,6 +54,13 @@ REQUIRED_FILES = [
 
 EXPECTED_SIGUNGU_COUNT = 15
 EXPECTED_CANDIDATE_ROWS = 75
+REQUIRED_REPORT_FIGURES = [
+    "reports/figures/01_final_risk_ranking.png",
+    "reports/figures/02_risk_components_stacked.png",
+    "reports/figures/03_reservoir_vs_alternative_shortage_scatter.png",
+    "reports/figures/04_top5_priority_table.png",
+    "reports/figures/05_alternative_source_top1_by_risk_area.png",
+]
 
 
 def row(check, target, status, detail=""):
@@ -82,6 +89,17 @@ def main():
             rel,
             "PASS" if path.exists() else "FAIL",
             "" if path.exists() else "missing file",
+        ))
+
+    for rel in REQUIRED_REPORT_FIGURES:
+        path = ROOT / rel
+        is_non_empty = path.exists() and path.stat().st_size > 0
+        detail = f"bytes={path.stat().st_size}" if path.exists() else "missing file"
+        records.append(row(
+            "figure_non_empty",
+            rel,
+            "PASS" if is_non_empty else "FAIL",
+            detail,
         ))
 
     # Static / PDF 기준 feature 검증
@@ -133,6 +151,29 @@ def main():
         if dup_cols:
             dup_count = int(fdf.duplicated(dup_cols).sum())
             records.append(row("facility_duplicate_count", "reservoir_facility_status_for_dashboard.csv", "PASS" if dup_count == 0 else "FAIL", f"duplicate_count={dup_count}"))
+
+        priority_cols = [
+            "facility_priority_rank",
+            "facility_scale_score",
+            "inspection_priority_score",
+            "facility_priority_reason",
+            "facility_priority_level",
+        ]
+        for c in priority_cols:
+            records.append(row("facility_priority_col", c, "PASS" if c in fdf.columns else "FAIL"))
+
+        if {"sigungu", "facility_priority_rank"}.issubset(fdf.columns):
+            rank_missing = int(pd.to_numeric(fdf["facility_priority_rank"], errors="coerce").isna().sum())
+            records.append(row("facility_priority_rank_missing", "facility_priority_rank", "PASS" if rank_missing == 0 else "FAIL", f"missing={rank_missing}"))
+
+        if {"sigungu", "inspection_priority_score"}.issubset(fdf.columns):
+            score = pd.to_numeric(fdf["inspection_priority_score"], errors="coerce")
+            records.append(row("facility_priority_score_missing", "inspection_priority_score", "PASS" if score.isna().sum() == 0 else "FAIL", f"missing={score.isna().sum()}"))
+            records.append(row("facility_priority_score_range", "inspection_priority_score", "PASS" if ((score >= 0) & (score <= 100)).all() else "FAIL", f"min={score.min()}, max={score.max()}"))
+            dangjin = fdf[fdf["sigungu"] == "당진시"].copy()
+            if len(dangjin) > 1:
+                spread = pd.to_numeric(dangjin["inspection_priority_score"], errors="coerce").max() - pd.to_numeric(dangjin["inspection_priority_score"], errors="coerce").min()
+                records.append(row("facility_priority_spread", "당진시", "PASS" if spread > 0 else "FAIL", f"spread={spread:.3f}"))
 
     # Live 데이터 검증
     live_status = safe_read_csv("reports/tables/latest_live_data_status.csv")
