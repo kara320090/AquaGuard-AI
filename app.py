@@ -1,12 +1,14 @@
-from pathlib import Path
+from __future__ import annotations
+
 from datetime import datetime
-import base64
+from pathlib import Path
+import re
 
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 
 
 ROOT = Path(__file__).resolve().parent
@@ -18,6 +20,12 @@ META = ROOT / "data" / "metadata"
 FEATURE_PATH = PROCESSED / "aquaguard_sigungu_features.csv"
 CANDIDATE_PATH = PROCESSED / "alternative_source_candidates.csv"
 TOP5_PATH = REPORT_TABLES / "alternative_source_top5_by_sigungu.csv"
+LIVE_SUMMARY_PATH = REPORT_TABLES / "latest_live_risk_summary.csv"
+AI_SUMMARY_PATH = REPORT_TABLES / "ai_sigungu_deep_summary.csv"
+GRU_HISTORY_PATH = REPORT_TABLES / "ai_gru_training_history.csv"
+AE_HISTORY_PATH = REPORT_TABLES / "ai_autoencoder_training_history.csv"
+AI_REPORT_PATH = META / "deep_ai_model_report.md"
+VALIDATION_PATH = META / "final_validation_report.csv"
 
 FIG_RANKING = REPORT_FIGURES / "01_final_risk_ranking.png"
 FIG_COMPONENTS = REPORT_FIGURES / "02_risk_components_stacked.png"
@@ -43,7 +51,16 @@ SIGUNGU_CENTROIDS = {
     "태안군": (36.7456, 126.2980),
 }
 
-PDF_COMPONENTS = [
+RISK_ORDER = ["심각", "심각후보", "경계", "주의", "낮음"]
+RISK_COLORS = {
+    "심각": "#c62828",
+    "심각후보": "#d84315",
+    "경계": "#ef6c00",
+    "주의": "#f9a825",
+    "낮음": "#2e7d32",
+}
+
+COMPONENTS = [
     ("rain_shortage_score", "강우 부족도", 0.25),
     ("reservoir_risk_score", "저수율 위험도", 0.25),
     ("groundwater_dependency_score", "관정 의존도", 0.20),
@@ -51,6 +68,32 @@ PDF_COMPONENTS = [
     ("alternative_source_access_shortage_score", "대체 수원 접근성 부족도", 0.10),
 ]
 
+SOURCE_CONFIG = {
+    "최종 산정": {
+        "score": "final_water_risk_score",
+        "level": "final_water_risk_level",
+        "rank": "final_priority_rank",
+        "driver": "main_risk_driver",
+        "action": "recommended_action",
+        "date": "reservoir_latest_date",
+    },
+    "Live 업데이트": {
+        "score": "final_live_water_risk_score",
+        "level": "final_live_water_risk_level",
+        "rank": "final_live_priority_rank",
+        "driver": "live_main_risk_driver",
+        "action": "recommended_action",
+        "date": "soil_data_date",
+    },
+    "Deep AI 예측": {
+        "score": "deep_ai_risk_score",
+        "level": "deep_ai_risk_level",
+        "rank": "deep_ai_rank",
+        "driver": "autoencoder_anomaly_level",
+        "action": "recommended_action",
+        "date": "target_date",
+    },
+}
 
 st.set_page_config(
     page_title="충남 AquaGuard AI",
@@ -60,606 +103,885 @@ st.set_page_config(
 )
 
 
+def inject_css() -> None:
+    st.markdown(
+        """
+        <style>
+        .block-container { padding-top: 1.6rem; padding-bottom: 3rem; }
+        [data-testid="stMetric"] {
+            background: #ffffff;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 14px 16px;
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+        }
+        [data-testid="stMetricLabel"] { color: #475569; }
+        div[data-testid="stCaptionContainer"] { color: #64748b; }
+        .ag-section {
+            margin-top: 1.6rem;
+            padding-top: 0.5rem;
+            border-top: 1px solid #eef2f7;
+        }
+        .ag-filter {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 0.75rem 0.9rem;
+            margin: 0.4rem 0 1rem 0;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_page_header(title: str, service_definition: str, latest_basis: str) -> None:
+    st.title(title)
+    st.caption(service_definition)
+    st.markdown(f"**최신 분석 기준:** {latest_basis}")
+
+
+def render_section_header(title: str, description: str | None = None) -> None:
+    st.markdown('<div class="ag-section"></div>', unsafe_allow_html=True)
+    st.subheader(title)
+    if description:
+        st.caption(description)
+
+
+def render_empty_state(message: str = "조건에 맞는 데이터가 없습니다") -> None:
+    st.info(message)
+
+
+def format_value(value, suffix: str = "", decimals: int = 1) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    if isinstance(value, (int, np.integer)):
+        return f"{int(value):,}{suffix}"
+    if isinstance(value, (float, np.floating)):
+        return f"{float(value):,.{decimals}f}{suffix}"
+    text = str(value)
+    return text if text else "N/A"
+
+
+def safe_float(value, default: float | None = None) -> float | None:
+    try:
+        if pd.isna(value):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def render_kpi_cards(cards: list[tuple[str, str, str | None]]) -> None:
+    cols = st.columns(len(cards))
+    for col, (label, value, help_text) in zip(cols, cards):
+        col.metric(label, value, help=help_text)
+
+
+@st.cache_data(show_spinner=False)
+def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame, str | None]:
+    path = Path(path_text)
+    if not path.exists():
+        level = "필수" if required else "선택"
+        return pd.DataFrame(), f"{level} 데이터 파일이 없습니다: {path}"
+
+    try:
+        suffix = path.suffix.lower()
+        if suffix == ".csv":
+            return pd.read_csv(path), None
+        if suffix == ".parquet":
+            return pd.read_parquet(path), None
+        if suffix == ".json":
+            return pd.read_json(path), None
+        return pd.DataFrame(), f"지원하지 않는 데이터 형식입니다: {path}"
+    except Exception as exc:  # noqa: BLE001 - dashboard should show a readable state.
+        return pd.DataFrame(), f"데이터 파일을 읽지 못했습니다: {path} ({exc})"
+
+
+@st.cache_data(show_spinner=False)
+def read_text_file(path_text: str) -> tuple[str, str | None]:
+    path = Path(path_text)
+    if not path.exists():
+        return "", f"선택 문서 파일이 없습니다: {path}"
+    try:
+        return path.read_text(encoding="utf-8-sig"), None
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8"), None
+    except Exception as exc:  # noqa: BLE001
+        return "", f"문서 파일을 읽지 못했습니다: {path} ({exc})"
+
+
+def show_load_messages(messages: list[str | None], required_stop: bool = False) -> None:
+    missing_required = False
+    for message in messages:
+        if not message:
+            continue
+        if message.startswith("필수"):
+            missing_required = True
+            st.warning(message)
+        elif "읽지 못했습니다" in message or "지원하지 않는" in message:
+            st.warning(message)
+        else:
+            st.info(message)
+    if required_stop and missing_required:
+        st.stop()
+
+
+def normalize_numeric(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    out = df.copy()
+    for col in columns:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
+
+
+def latest_date_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> str:
+    dates: list[pd.Timestamp] = []
+    for df in frames:
+        if df.empty:
+            continue
+        for col in columns:
+            if col in df.columns:
+                parsed = pd.to_datetime(df[col], errors="coerce")
+                dates.extend(parsed.dropna().tolist())
+    if not dates:
+        return "N/A"
+    return max(dates).strftime("%Y-%m-%d")
+
+
+def available_levels(df: pd.DataFrame, level_col: str = "risk_level") -> list[str]:
+    if df.empty or level_col not in df.columns:
+        return []
+    found = [x for x in df[level_col].dropna().astype(str).unique().tolist()]
+    known = [x for x in RISK_ORDER if x in found]
+    unknown = sorted([x for x in found if x not in RISK_ORDER])
+    return known + unknown
+
+
+def is_risky(level: str | None) -> bool:
+    return str(level) in {"주의", "경계", "심각", "심각후보"}
+
+
 def risk_color(level: str) -> str:
-    if level == "심각":
-        return "#d73027"
-    if level == "경계":
-        return "#fc8d59"
-    if level == "주의":
-        return "#fee08b"
-    if level == "낮음":
-        return "#91cf60"
-    return "#cccccc"
+    return RISK_COLORS.get(str(level), "#64748b")
 
 
-def risk_badge(level: str) -> str:
-    color = risk_color(level)
-    text_color = "#111111" if level in ["주의", "낮음"] else "#ffffff"
-    return (
-        f"<span style='background:{color}; color:{text_color}; padding:6px 12px; "
-        f"border-radius:999px; font-weight:700;'>{level}</span>"
+def parse_report_metrics(report: str) -> dict[str, float]:
+    metrics: dict[str, float] = {}
+    mae = re.search(r"MAE:\s*([-+]?\d+(?:\.\d+)?)", report, flags=re.IGNORECASE)
+    r2 = re.search(r"R2:\s*([-+]?\d+(?:\.\d+)?)", report, flags=re.IGNORECASE)
+    sample_count = re.search(r"검증\s*샘플\s*수:\s*([\d,]+)", report)
+    if mae:
+        metrics["검증 MAE"] = float(mae.group(1))
+    if r2:
+        metrics["검증 R2"] = float(r2.group(1))
+    if sample_count:
+        metrics["검증 샘플 수"] = float(sample_count.group(1).replace(",", ""))
+    return metrics
+
+
+def build_performance_summary(
+    report: str,
+    gru_history: pd.DataFrame,
+    ae_history: pd.DataFrame,
+) -> tuple[str, str, list[tuple[str, str, str]]]:
+    report_metrics = parse_report_metrics(report)
+    metric_cards: list[tuple[str, str, str]] = []
+
+    if "검증 MAE" in report_metrics:
+        metric_cards.append(
+            (
+                "GRU 검증 MAE",
+                f"{report_metrics['검증 MAE']:.4f}",
+                "낮을수록 7일 후 평균 저수율 예측값과 실제값의 차이가 작습니다.",
+            )
+        )
+    if "검증 R2" in report_metrics:
+        metric_cards.append(
+            (
+                "GRU 검증 R2",
+                f"{report_metrics['검증 R2']:.4f}",
+                "1에 가까울수록 검증 데이터의 저수율 변동을 더 잘 설명합니다.",
+            )
+        )
+    if "검증 샘플 수" in report_metrics:
+        metric_cards.append(
+            (
+                "검증 샘플 수",
+                f"{int(report_metrics['검증 샘플 수']):,}",
+                "성능 확인에 사용된 시계열 샘플 수입니다.",
+            )
+        )
+
+    if not gru_history.empty and "valid_mae" in gru_history.columns:
+        best_mae = pd.to_numeric(gru_history["valid_mae"], errors="coerce").min()
+        if pd.notna(best_mae):
+            metric_cards.append(
+                (
+                    "학습 이력 최저 MAE",
+                    f"{best_mae:.4f}",
+                    "학습 로그에 기록된 epoch별 검증 MAE 중 최저값입니다.",
+                )
+            )
+    if not ae_history.empty and "valid_recon_loss" in ae_history.columns:
+        best_loss = pd.to_numeric(ae_history["valid_recon_loss"], errors="coerce").min()
+        if pd.notna(best_loss):
+            metric_cards.append(
+                (
+                    "AutoEncoder 최저 재구성 손실",
+                    f"{best_loss:.4f}",
+                    "낮을수록 정상 패턴 복원이 안정적입니다.",
+                )
+            )
+
+    best_model = "PyTorch GRU" if "검증 MAE" in report_metrics or not gru_history.empty else "N/A"
+    main_metric = (
+        f"MAE {report_metrics['검증 MAE']:.4f}"
+        if "검증 MAE" in report_metrics
+        else (metric_cards[0][1] if metric_cards else "N/A")
     )
+    return best_model, main_metric, metric_cards
 
 
-@st.cache_data
-def load_data():
-    if not FEATURE_PATH.exists():
-        raise FileNotFoundError(f"최종 feature 파일이 없습니다: {FEATURE_PATH}")
-
-    features = pd.read_csv(FEATURE_PATH)
-
-    if TOP5_PATH.exists():
-        candidates = pd.read_csv(TOP5_PATH)
-    elif CANDIDATE_PATH.exists():
-        candidates = pd.read_csv(CANDIDATE_PATH)
+def make_source_view(
+    mode: str,
+    features: pd.DataFrame,
+    live: pd.DataFrame,
+    ai_summary: pd.DataFrame,
+) -> pd.DataFrame:
+    if mode == "Live 업데이트" and not live.empty:
+        source = live.copy()
+    elif mode == "Deep AI 예측" and not ai_summary.empty:
+        source = ai_summary.copy()
     else:
-        candidates = pd.DataFrame()
+        source = features.copy()
+        mode = "최종 산정"
 
-    features["final_water_risk_score"] = pd.to_numeric(
-        features["final_water_risk_score"], errors="coerce"
+    config = SOURCE_CONFIG[mode]
+    base_actions = pd.DataFrame()
+    if not features.empty and {"sigungu", "recommended_action"}.issubset(features.columns):
+        base_actions = features[["sigungu", "recommended_action"]].drop_duplicates()
+
+    if mode != "최종 산정" and not base_actions.empty and "recommended_action" not in source.columns:
+        source = source.merge(base_actions, on="sigungu", how="left")
+
+    out = pd.DataFrame()
+    out["sigungu"] = source["sigungu"] if "sigungu" in source.columns else pd.Series(dtype=str)
+    out["risk_score"] = pd.to_numeric(source.get(config["score"], np.nan), errors="coerce")
+    out["risk_level"] = source.get(config["level"], "N/A").astype(str) if config["level"] in source.columns else "N/A"
+    out["priority_rank"] = pd.to_numeric(source.get(config["rank"], np.nan), errors="coerce")
+    out["main_risk_driver"] = source.get(config["driver"], "N/A") if config["driver"] in source.columns else "N/A"
+    out["recommended_action"] = source.get(config["action"], np.nan) if config["action"] in source.columns else np.nan
+    out["basis_date"] = source.get(config["date"], np.nan) if config["date"] in source.columns else np.nan
+    out["analysis_mode"] = mode
+
+    if mode == "Live 업데이트":
+        for col in ["live_score_delta_from_baseline", "live_weather_source", "live_reservoir_source", "live_soil_source"]:
+            if col in source.columns:
+                out[col] = source[col]
+    if mode == "Deep AI 예측":
+        for col in ["current_avg_reservoir_rate", "pred_avg_reservoir_rate_7d", "forecast_drop_7d", "forecast_risk_score", "autoencoder_anomaly_score"]:
+            if col in source.columns:
+                out[col] = source[col]
+
+    return out.dropna(subset=["sigungu"]).reset_index(drop=True)
+
+
+def build_rule_based_reason(row: pd.Series) -> str:
+    values = []
+    for col, label, _weight in COMPONENTS:
+        value = safe_float(row.get(col), None)
+        if value is not None:
+            values.append((label, value))
+    if not values:
+        driver = row.get("main_risk_driver", None)
+        return str(driver) if driver and pd.notna(driver) else "규칙 기반 설명을 만들 수 있는 지표가 없습니다"
+    label, value = max(values, key=lambda item: item[1])
+    return f"규칙 기반 설명: {label} 점수가 가장 높음({value:.1f}점)"
+
+
+def build_priority_table(source_df: pd.DataFrame, features: pd.DataFrame, top_n: int) -> pd.DataFrame:
+    if source_df.empty:
+        return pd.DataFrame()
+
+    base = source_df.copy()
+    if not features.empty:
+        component_cols = ["sigungu", *[c for c, _label, _weight in COMPONENTS]]
+        component_cols = [c for c in component_cols if c in features.columns]
+        if component_cols:
+            base = base.merge(features[component_cols].drop_duplicates("sigungu"), on="sigungu", how="left")
+
+    base = base.sort_values(["priority_rank", "risk_score"], ascending=[True, False]).head(top_n)
+
+    rows = []
+    for _, row in base.iterrows():
+        reason = row.get("main_risk_driver", None)
+        if reason is None or pd.isna(reason) or str(reason).strip() in {"", "N/A", "nan"}:
+            reason = build_rule_based_reason(row)
+
+        action = row.get("recommended_action", None)
+        if action is None or pd.isna(action) or str(action).strip() in {"", "nan"}:
+            action = "현장 점검 및 대체 수원 후보 확인" if is_risky(row.get("risk_level")) else "정기 모니터링 유지"
+
+        rows.append(
+            {
+                "순위": format_value(row.get("priority_rank"), decimals=0),
+                "대상": row.get("sigungu", "N/A"),
+                "위험점수": format_value(row.get("risk_score"), "점", 1),
+                "위험등급": row.get("risk_level", "N/A"),
+                "판단 근거": reason,
+                "권고 조치": action,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def make_ranking_chart(df: pd.DataFrame, title: str, top_n: int) -> go.Figure | None:
+    if df.empty:
+        return None
+    plot_df = df.sort_values("risk_score", ascending=False).head(top_n).sort_values("risk_score")
+    fig = go.Figure(
+        go.Bar(
+            x=plot_df["risk_score"],
+            y=plot_df["sigungu"],
+            orientation="h",
+            text=plot_df["risk_score"].map(lambda x: f"{x:.1f}" if pd.notna(x) else "N/A"),
+            textposition="outside",
+            marker_color=[risk_color(x) for x in plot_df["risk_level"]],
+        )
     )
-
-    features = features.sort_values("final_priority_rank").reset_index(drop=True)
-
-    for col in [
-        "rain_shortage_score",
-        "reservoir_risk_score",
-        "groundwater_dependency_score",
-        "crop_water_demand_score",
-        "alternative_source_access_shortage_score",
-        "water_supply_pressure_score",
-        "agricultural_demand_score",
-        "alternative_water_risk_score",
-        "agri_impact_index",
-        "well_support_score",
-        "well_shortage_score",
-    ]:
-        if col in features.columns:
-            features[col] = pd.to_numeric(features[col], errors="coerce")
-
-    return features, candidates
+    fig.update_layout(
+        title=title,
+        xaxis_title="위험점수",
+        yaxis_title="시·군",
+        height=max(380, 34 * len(plot_df) + 140),
+        margin=dict(l=20, r=40, t=70, b=40),
+        xaxis=dict(range=[0, max(100, float(plot_df["risk_score"].max()) * 1.15)]),
+    )
+    return fig
 
 
-def make_map_df(features):
-    map_df = features.copy()
-    map_df["lat"] = map_df["sigungu"].map(lambda x: SIGUNGU_CENTROIDS.get(x, (np.nan, np.nan))[0])
-    map_df["lon"] = map_df["sigungu"].map(lambda x: SIGUNGU_CENTROIDS.get(x, (np.nan, np.nan))[1])
-    map_df = map_df.dropna(subset=["lat", "lon"]).copy()
-    map_df["marker_size"] = 12 + map_df["final_water_risk_score"].fillna(0) * 0.7
-    return map_df
+def make_distribution_chart(df: pd.DataFrame) -> go.Figure | None:
+    if df.empty or "risk_score" not in df.columns:
+        return None
+    fig = px.histogram(
+        df,
+        x="risk_score",
+        color="risk_level",
+        nbins=10,
+        color_discrete_map=RISK_COLORS,
+        title="위험점수 분포: 전체 대상은 어느 구간에 몰려 있는가?",
+    )
+    fig.update_layout(xaxis_title="위험점수", yaxis_title="대상 수", height=360)
+    return fig
 
 
-def make_risk_map(features, selected_sigungu):
-    map_df = make_map_df(features)
+def make_driver_chart(features: pd.DataFrame) -> go.Figure | None:
+    if features.empty or "main_risk_driver" not in features.columns or "final_water_risk_score" not in features.columns:
+        return None
+    driver_df = (
+        features.groupby("main_risk_driver", dropna=False)
+        .agg(대상수=("sigungu", "count"), 평균위험점수=("final_water_risk_score", "mean"))
+        .reset_index()
+        .sort_values("평균위험점수", ascending=False)
+    )
+    fig = px.bar(
+        driver_df,
+        x="평균위험점수",
+        y="main_risk_driver",
+        orientation="h",
+        text="대상수",
+        title="주요 위험 원인별 평균 위험점수: 어떤 요인이 우선인가?",
+    )
+    fig.update_layout(xaxis_title="평균 위험점수", yaxis_title="주요 위험 원인", height=360)
+    return fig
 
+
+def make_component_chart(features: pd.DataFrame, sigungu: str) -> go.Figure | None:
+    if features.empty or "sigungu" not in features.columns:
+        return None
+    selected = features[features["sigungu"] == sigungu]
+    if selected.empty:
+        return None
+    row = selected.iloc[0]
+    labels = []
+    scores = []
+    weighted = []
+    for col, label, weight in COMPONENTS:
+        if col not in features.columns:
+            continue
+        value = safe_float(row.get(col), None)
+        if value is None:
+            continue
+        labels.append(label)
+        scores.append(value)
+        weighted.append(value * weight)
+    if not labels:
+        return None
+
+    fig = go.Figure()
+    fig.add_bar(x=labels, y=scores, name="원점수", text=[f"{v:.1f}" for v in scores], textposition="outside")
+    fig.add_scatter(
+        x=labels,
+        y=weighted,
+        name="가중 기여점수",
+        mode="lines+markers+text",
+        text=[f"{v:.1f}" for v in weighted],
+        textposition="top center",
+    )
+    fig.update_layout(
+        title=f"{sigungu} 위험 구성요소: 어떤 지표가 점수를 끌어올리는가?",
+        yaxis_title="점수",
+        xaxis_title="위험 구성요소",
+        height=390,
+        yaxis=dict(range=[0, max(100, max(scores) * 1.15)]),
+    )
+    return fig
+
+
+def make_map_chart(df: pd.DataFrame) -> go.Figure | None:
+    if df.empty:
+        return None
+    map_df = df.copy()
+    map_df["lat"] = map_df["sigungu"].map(lambda x: SIGUNGU_CENTROIDS.get(str(x), (np.nan, np.nan))[0])
+    map_df["lon"] = map_df["sigungu"].map(lambda x: SIGUNGU_CENTROIDS.get(str(x), (np.nan, np.nan))[1])
+    map_df = map_df.dropna(subset=["lat", "lon"])
+    if map_df.empty:
+        return None
+    map_df["marker_size"] = 12 + map_df["risk_score"].fillna(0).clip(lower=0) * 0.55
     fig = px.scatter_mapbox(
         map_df,
         lat="lat",
         lon="lon",
         size="marker_size",
-        color="final_water_risk_level",
+        color="risk_level",
         hover_name="sigungu",
-        hover_data={
-            "final_water_risk_score": ":.1f",
-            "main_risk_driver": True,
-            "lat": False,
-            "lon": False,
-            "marker_size": False,
-        },
-        color_discrete_map={
-            "낮음": "#91cf60",
-            "주의": "#fee08b",
-            "경계": "#fc8d59",
-            "심각": "#d73027",
-        },
+        hover_data={"risk_score": ":.1f", "main_risk_driver": True, "lat": False, "lon": False, "marker_size": False},
+        color_discrete_map=RISK_COLORS,
         zoom=7,
-        height=520,
-        center={"lat": 36.55, "lon": 126.95},
-    )
-
-    selected = map_df[map_df["sigungu"] == selected_sigungu]
-    if not selected.empty:
-        fig.add_trace(
-            go.Scattermapbox(
-                lat=selected["lat"],
-                lon=selected["lon"],
-                mode="markers",
-                marker=dict(size=28, color="black", opacity=0.35),
-                name="선택 지역",
-                hoverinfo="skip",
-            )
-        )
-
-    fig.update_layout(
-        mapbox_style="open-street-map",
-        margin=dict(l=0, r=0, t=0, b=0),
-        legend_title_text="위험 단계",
-    )
-
-    return fig
-
-
-def make_component_chart(row):
-    labels = []
-    scores = []
-    weighted = []
-
-    for col, label, weight in PDF_COMPONENTS:
-        value = row.get(col, np.nan)
-        value = 50 if pd.isna(value) else float(value)
-        labels.append(f"{label} ({int(weight * 100)}%)")
-        scores.append(value)
-        weighted.append(value * weight)
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Bar(
-            x=labels,
-            y=scores,
-            name="원점수",
-            text=[f"{v:.1f}" for v in scores],
-            textposition="outside",
-        )
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=labels,
-            y=weighted,
-            name="가중 기여점수",
-            mode="lines+markers+text",
-            text=[f"{v:.1f}" for v in weighted],
-            textposition="top center",
-        )
-    )
-
-    fig.update_layout(
-        title="PDF 기준 5개 위험지표 점수",
-        yaxis_title="점수",
-        xaxis_title="지표",
-        yaxis=dict(range=[0, max(100, max(scores) * 1.15)]),
         height=430,
-        margin=dict(l=30, r=30, t=60, b=60),
+        center={"lat": 36.55, "lon": 126.95},
+        title="지도 보기: 위험 대상은 어디에 집중되어 있는가?",
     )
-
+    fig.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=60, b=0), legend_title_text="위험등급")
     return fig
 
 
-def make_ranking_chart(features):
-    plot_df = features.sort_values("final_water_risk_score", ascending=True).copy()
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Bar(
-            x=plot_df["final_water_risk_score"],
-            y=plot_df["sigungu"],
-            orientation="h",
-            text=plot_df["final_water_risk_score"].map(lambda x: f"{x:.1f}"),
-            textposition="outside",
-            marker_color=[risk_color(x) for x in plot_df["final_water_risk_level"]],
-        )
+def make_ai_scatter(ai_summary: pd.DataFrame) -> go.Figure | None:
+    needed = {"current_avg_reservoir_rate", "pred_avg_reservoir_rate_7d", "sigungu", "deep_ai_risk_level"}
+    if ai_summary.empty or not needed.issubset(ai_summary.columns):
+        return None
+    fig = px.scatter(
+        ai_summary,
+        x="current_avg_reservoir_rate",
+        y="pred_avg_reservoir_rate_7d",
+        color="deep_ai_risk_level",
+        hover_name="sigungu",
+        size="deep_ai_risk_score" if "deep_ai_risk_score" in ai_summary.columns else None,
+        color_discrete_map=RISK_COLORS,
+        title="Deep AI 예측: 현재 저수율과 7일 후 예측은 어떻게 다른가?",
     )
-
-    fig.update_layout(
-        title="충남 시·군별 농업용수 부족 위험도 순위",
-        xaxis_title="최종 위험도 점수",
-        yaxis_title="시·군",
-        height=560,
-        margin=dict(l=40, r=50, t=60, b=40),
-        xaxis=dict(range=[0, max(100, plot_df["final_water_risk_score"].max() * 1.15)]),
-    )
-
+    fig.add_shape(type="line", x0=0, y0=0, x1=100, y1=100, line=dict(color="#94a3b8", dash="dash"))
+    fig.update_layout(xaxis_title="현재 평균 저수율", yaxis_title="7일 후 예측 저수율", height=420)
     return fig
 
 
-def format_score(x):
-    if pd.isna(x):
-        return "-"
-    return f"{float(x):.1f}"
-
-
-def build_reason_detail(row):
-    items = []
-
-    mapping = [
-        ("rain_shortage_score", "강우부족"),
-        ("reservoir_risk_score", "저수율"),
-        ("groundwater_dependency_score", "관정의존"),
-        ("crop_water_demand_score", "작물수요"),
-        ("alternative_source_access_shortage_score", "대체수원"),
-    ]
-
-    for col, label in mapping:
-        value = row.get(col, None)
-        if pd.notna(value):
-            items.append((label, float(value)))
-
-    if not items:
-        return "세부 지표 없음"
-
-    items = sorted(items, key=lambda x: x[1], reverse=True)
-    top3 = items[:3]
-    score_text = ", ".join([f"{name} {score:.1f}점" for name, score in top3])
-
-    high = [name for name, score in top3 if score >= 60]
-    medium = [name for name, score in top3 if 40 <= score < 60]
-
-    if high:
-        reason = " / ".join(high) + " 영향이 큼"
-    elif medium:
-        reason = " / ".join(medium) + " 지표 확인 필요"
-    else:
-        reason = "절대 위험도는 낮지만 상대적으로 높은 지표 기준 정렬"
-
-    return f"{score_text} → {reason}"
-
-
-def build_component_explanation(row):
-    rows = []
-    for col, label, weight in PDF_COMPONENTS:
-        raw_value = row.get(col, np.nan)
-        score = 50.0 if pd.isna(raw_value) else float(raw_value)
-        rows.append({
-            "지표": label,
-            "원점수": score,
-            "가중치": f"{int(weight * 100)}%",
-            "위험 기여점수": score * weight,
-            "해석": explain_component(col, score),
-        })
-
-    out = pd.DataFrame(rows)
-    out = out.sort_values("위험 기여점수", ascending=False).reset_index(drop=True)
-    out["원점수"] = out["원점수"].map(lambda x: f"{x:.1f}")
-    out["위험 기여점수"] = out["위험 기여점수"].map(lambda x: f"{x:.1f}")
-    return out
-
-
-def explain_component(col, score):
-    score = 0 if pd.isna(score) else float(score)
-
-    if col == "rain_shortage_score":
-        return "최근 강우 부족 영향이 큼" if score >= 60 else "최근 강우 부족 영향은 제한적"
-    if col == "reservoir_risk_score":
-        return "저수율 부족 또는 저수지 편차 확인 필요" if score >= 40 else "저수율 위험은 상대적으로 낮음"
-    if col == "groundwater_dependency_score":
-        return "관정 의존도가 높아 지하수 부담 가능" if score >= 60 else "관정 의존도 부담은 낮음"
-    if col == "crop_water_demand_score":
-        return "작물 물수요가 높아 용수 수요 증가 가능" if score >= 60 else "작물 물수요 영향은 제한적"
-    if col == "alternative_source_access_shortage_score":
-        return "대체 수원 접근성이 부족해 보완 필요" if score >= 60 else "대체 수원 접근성은 상대적으로 양호"
-    return ""
-
-
-def selected_candidates(candidates, sigungu):
-    if candidates.empty:
-        return candidates
-
-    if "target_sigungu" not in candidates.columns:
+def selected_candidates(candidates: pd.DataFrame, sigungu: str, top_n: int = 5) -> pd.DataFrame:
+    if candidates.empty or "target_sigungu" not in candidates.columns:
         return pd.DataFrame()
-
-    df = candidates[candidates["target_sigungu"] == sigungu].copy()
-
-    if "candidate_rank" in df.columns:
-        df = df.sort_values("candidate_rank")
-
-    return df.head(5)
+    out = candidates[candidates["target_sigungu"] == sigungu].copy()
+    if "candidate_rank" in out.columns:
+        out = out.sort_values("candidate_rank")
+    return out.head(top_n)
 
 
-def build_html_report(row, candidates):
+def candidate_display(candidates: pd.DataFrame) -> pd.DataFrame:
+    if candidates.empty:
+        return pd.DataFrame()
+    cols = [
+        "candidate_rank",
+        "candidate_reservoir_name",
+        "candidate_sigungu",
+        "distance_km",
+        "candidate_reservoir_rate",
+        "benefit_area",
+        "candidate_score",
+        "recommendation_reason",
+    ]
+    cols = [c for c in cols if c in candidates.columns]
+    return candidates[cols].rename(
+        columns={
+            "candidate_rank": "순위",
+            "candidate_reservoir_name": "대체 수원 후보",
+            "candidate_sigungu": "소속 시·군",
+            "distance_km": "거리(km)",
+            "candidate_reservoir_rate": "후보 저수율",
+            "benefit_area": "수혜면적",
+            "candidate_score": "후보점수",
+            "recommendation_reason": "추천 사유",
+        }
+    )
+
+
+def build_html_report(row: pd.Series, candidates: pd.DataFrame) -> str:
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
-
-    component_rows = ""
-    for col, label, weight in PDF_COMPONENTS:
-        value = row.get(col, np.nan)
-        component_rows += (
-            f"<tr><td>{label}</td><td>{format_score(value)}</td>"
-            f"<td>{int(weight * 100)}%</td><td>{format_score((0 if pd.isna(value) else value) * weight)}</td></tr>"
-        )
+    sigungu = row.get("sigungu", "-")
+    score = format_value(row.get("risk_score"), "점", 1)
+    level = row.get("risk_level", "N/A")
+    reason = row.get("main_risk_driver", "N/A")
+    action = row.get("recommended_action", "현장 점검 및 대체 수원 후보 확인")
 
     candidate_rows = ""
     if candidates.empty:
-        candidate_rows = "<tr><td colspan='7'>추천 후보 없음</td></tr>"
+        candidate_rows = "<tr><td colspan='6'>대체 수원 후보 없음</td></tr>"
     else:
         for _, c in candidates.iterrows():
             candidate_rows += f"""
             <tr>
-              <td>{int(c.get('candidate_rank', 0))}</td>
+              <td>{format_value(c.get('candidate_rank'), decimals=0)}</td>
               <td>{c.get('candidate_reservoir_name', '-')}</td>
               <td>{c.get('candidate_sigungu', '-')}</td>
-              <td>{format_score(c.get('distance_km', np.nan))} km</td>
-              <td>{format_score(c.get('candidate_reservoir_rate', np.nan))}</td>
-              <td>{format_score(c.get('benefit_area', np.nan))}</td>
-              <td>{format_score(c.get('candidate_score', np.nan))}</td>
+              <td>{format_value(c.get('distance_km'), ' km', 1)}</td>
+              <td>{format_value(c.get('candidate_reservoir_rate'), '%', 1)}</td>
+              <td>{format_value(c.get('candidate_score'), '점', 1)}</td>
             </tr>
             """
 
-    html = f"""
+    return f"""
     <!doctype html>
     <html lang="ko">
     <head>
       <meta charset="utf-8">
-      <title>AquaGuard AI 행정 리포트 - {row['sigungu']}</title>
+      <title>AquaGuard AI 의사결정 리포트 - {sigungu}</title>
       <style>
         body {{ font-family: Arial, sans-serif; margin: 36px; line-height: 1.55; color: #222; }}
-        h1 {{ color: #0b3d5c; }}
+        h1 {{ color: #0f3d4f; }}
         h2 {{ margin-top: 28px; color: #145374; }}
         table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
         th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
         th {{ background: #eef4f7; }}
-        .card {{ border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin: 12px 0; }}
-        .warning {{ background: #fff7e6; border-left: 5px solid #ffb000; padding: 12px; }}
+        .card {{ border: 1px solid #ddd; border-radius: 8px; padding: 16px; margin: 12px 0; }}
+        .note {{ background: #fff7e6; border-left: 5px solid #ffb000; padding: 12px; }}
       </style>
     </head>
     <body>
-      <h1>충남 AquaGuard AI 행정 참고 리포트</h1>
+      <h1>충남 AquaGuard AI 의사결정 리포트</h1>
       <p>생성 시각: {generated_at}</p>
-
       <div class="card">
-        <h2>{row['sigungu']} 농업용수 부족 위험 요약</h2>
-        <p><b>최종 위험도:</b> {format_score(row.get('final_water_risk_score'))}점</p>
-        <p><b>위험 단계:</b> {row.get('final_water_risk_level')}</p>
-        <p><b>주요 위험 원인:</b> {row.get('main_risk_driver')}</p>
-        <p><b>권고 조치:</b> {row.get('recommended_action')}</p>
+        <h2>{sigungu} 농업용수 위험 요약</h2>
+        <p><b>위험점수:</b> {score}</p>
+        <p><b>위험등급:</b> {level}</p>
+        <p><b>판단 근거:</b> {reason}</p>
+        <p><b>권고 조치:</b> {action}</p>
       </div>
-
-      <h2>PDF 기준 5개 위험지표</h2>
-      <table>
-        <tr><th>지표</th><th>점수</th><th>가중치</th><th>가중 기여점수</th></tr>
-        {component_rows}
-      </table>
-
       <h2>대체 수원 후보 TOP 5</h2>
       <table>
-        <tr>
-          <th>순위</th><th>후보 저수지</th><th>소속 시·군</th>
-          <th>거리</th><th>후보 저수율</th><th>수혜면적</th><th>후보점수</th>
-        </tr>
+        <tr><th>순위</th><th>후보 저수지</th><th>소속 시·군</th><th>거리</th><th>후보 저수율</th><th>후보점수</th></tr>
         {candidate_rows}
       </table>
-
-      <div class="warning">
-        본 리포트는 공개데이터 기반 행정 참고자료입니다. 실제 대체 수원 공급 가능 여부는 관로, 수리권,
-        수질, 현장 접근성, 행정 협의 등을 추가 검토해야 합니다.
+      <div class="note">
+        본 리포트는 공개데이터 기반 의사결정 참고자료입니다. 실제 급수 대응은 현장 접근성, 관로, 수리권, 수질, 행정 협의를 함께 검토해야 합니다.
       </div>
     </body>
     </html>
     """
 
-    return html
+
+def render_sidebar(source_df: pd.DataFrame) -> tuple[str, list[str], list[str], int, str]:
+    all_modes = ["최종 산정", "Live 업데이트", "Deep AI 예측"]
+    all_regions = sorted(source_df["sigungu"].dropna().astype(str).unique().tolist()) if not source_df.empty else []
+
+    if "analysis_mode" not in st.session_state:
+        st.session_state.analysis_mode = "최종 산정"
+    if "selected_regions" not in st.session_state:
+        st.session_state.selected_regions = all_regions
+
+    with st.sidebar:
+        st.header("필터")
+        if st.button("기본값으로 초기화", use_container_width=True):
+            st.session_state.analysis_mode = "최종 산정"
+            st.session_state.selected_regions = all_regions
+            st.session_state.selected_levels = available_levels(source_df)
+            st.session_state.top_n = 10
+            st.rerun()
+
+        st.markdown("#### 기간")
+        mode = st.radio("분석 기준", all_modes, key="analysis_mode", help="현재 파일에 저장된 최신 기준 결과를 선택합니다.")
+
+    return mode, all_regions, [], 10, ""
 
 
-def download_html_button(html, filename):
-    st.download_button(
-        label="HTML 행정 리포트 다운로드",
-        data=html.encode("utf-8-sig"),
-        file_name=filename,
-        mime="text/html",
-        use_container_width=True,
+def render_filters_for_mode(source_df: pd.DataFrame, latest_basis: str) -> tuple[list[str], list[str], int, str]:
+    all_regions = sorted(source_df["sigungu"].dropna().astype(str).unique().tolist()) if not source_df.empty else []
+    levels = available_levels(source_df)
+    if "selected_regions" not in st.session_state:
+        st.session_state.selected_regions = all_regions
+    if "selected_levels" not in st.session_state:
+        st.session_state.selected_levels = levels
+    st.session_state.selected_regions = [r for r in st.session_state.selected_regions if r in all_regions] or all_regions
+    st.session_state.selected_levels = [r for r in st.session_state.selected_levels if r in levels] or levels
+
+    with st.sidebar:
+        st.caption(f"최신 기준: {latest_basis}")
+        st.markdown("#### 지역/대상")
+        selected_regions = st.multiselect("시·군", all_regions, key="selected_regions")
+        focus_options = selected_regions or all_regions
+        focus_target = st.selectbox("상세 확인 대상", focus_options, index=0 if focus_options else None)
+
+        st.markdown("#### 모델/위험등급")
+        selected_levels = st.multiselect("위험등급", levels, key="selected_levels")
+        max_top = max(5, min(15, len(source_df))) if not source_df.empty else 5
+        top_n = st.slider("점검 우선순위 표시 수", 5, max_top, min(st.session_state.get("top_n", 10), max_top), key="top_n")
+
+    return selected_regions, selected_levels, top_n, focus_target
+
+
+def main() -> None:
+    inject_css()
+
+    features, feature_msg = safe_read_data(str(FEATURE_PATH), required=True)
+    candidates, candidate_msg = safe_read_data(str(TOP5_PATH if TOP5_PATH.exists() else CANDIDATE_PATH), required=False)
+    live_summary, live_msg = safe_read_data(str(LIVE_SUMMARY_PATH), required=False)
+    ai_summary, ai_msg = safe_read_data(str(AI_SUMMARY_PATH), required=False)
+    gru_history, gru_msg = safe_read_data(str(GRU_HISTORY_PATH), required=False)
+    ae_history, ae_msg = safe_read_data(str(AE_HISTORY_PATH), required=False)
+    validation, validation_msg = safe_read_data(str(VALIDATION_PATH), required=False)
+    report_text, report_msg = read_text_file(str(AI_REPORT_PATH))
+
+    show_load_messages([feature_msg], required_stop=True)
+    if features.empty:
+        render_empty_state("필수 위험도 산정 데이터가 비어 있습니다.")
+        st.stop()
+
+    numeric_cols = [
+        "final_priority_rank",
+        "final_water_risk_score",
+        "rain_shortage_score",
+        "reservoir_risk_score",
+        "groundwater_dependency_score",
+        "crop_water_demand_score",
+        "alternative_source_access_shortage_score",
+        "avg_reservoir_rate",
+        "min_reservoir_rate",
+        "reservoir_count",
+    ]
+    features = normalize_numeric(features, numeric_cols)
+    live_summary = normalize_numeric(
+        live_summary,
+        ["final_live_priority_rank", "final_live_water_risk_score", "live_score_delta_from_baseline"],
+    )
+    ai_summary = normalize_numeric(
+        ai_summary,
+        ["deep_ai_rank", "deep_ai_risk_score", "current_avg_reservoir_rate", "pred_avg_reservoir_rate_7d"],
     )
 
+    latest_basis = latest_date_from_columns(
+        [features, live_summary, ai_summary],
+        ["reservoir_latest_date", "weather_latest_date", "soil_data_date", "base_date", "target_date"],
+    )
+    best_model, main_metric, performance_cards = build_performance_summary(report_text, gru_history, ae_history)
 
-def render_image_if_exists(path, caption):
-    if path.exists():
-        st.image(str(path), caption=caption, use_container_width=True)
+    render_page_header(
+        "충남 AquaGuard AI 농업용수 위험도 의사결정 대시보드",
+        "기상·저수율·관정·작물·대체 수원 데이터를 기반으로 고위험 시·군과 점검 우선순위를 한눈에 확인합니다.",
+        latest_basis,
+    )
+
+    mode, _all_regions, _levels, _top_n, _focus = render_sidebar(features)
+    source_df = make_source_view(mode, features, live_summary, ai_summary)
+    selected_regions, selected_levels, top_n, focus_target = render_filters_for_mode(source_df, latest_basis)
+
+    filtered = source_df.copy()
+    if selected_regions:
+        filtered = filtered[filtered["sigungu"].isin(selected_regions)]
+    if selected_levels:
+        filtered = filtered[filtered["risk_level"].isin(selected_levels)]
+
+    high_risk_count = int(filtered["risk_level"].map(is_risky).sum()) if not filtered.empty else 0
+    latest_period = latest_date_from_columns([filtered], ["basis_date"])
+    total_records = len(filtered)
+
+    st.markdown(
+        f"""
+        <div class="ag-filter">
+        현재 필터: <b>{mode}</b> · 지역 <b>{len(selected_regions) if selected_regions else 0}개</b> ·
+        위험등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> · 상세 대상 <b>{focus_target or "N/A"}</b>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    render_kpi_cards(
+        [
+            ("분석 데이터 수", f"{total_records:,}건", "현재 필터 기준으로 표시되는 시·군 단위 결과 수입니다."),
+            ("고위험 대상 수", f"{high_risk_count:,}곳", "위험등급이 주의·경계·심각·심각후보인 대상 수입니다."),
+            ("최고 성능 모델", best_model, "성능 검증 파일에서 확인 가능한 모델명입니다."),
+            ("주요 성능 지표", main_metric, "존재하는 검증 지표만 표시합니다."),
+            ("최신 데이터 기준일", latest_period, "현재 분석 기준에서 확인 가능한 최신 날짜입니다."),
+        ]
+    )
+
+    if filtered.empty:
+        render_empty_state()
+        st.stop()
+
+    render_section_header(
+        "점검 우선순위",
+        "현재 필터 기준으로 가장 먼저 확인할 시·군과 권고 조치를 정리했습니다.",
+    )
+    priority_table = build_priority_table(filtered, features, top_n)
+    if priority_table.empty:
+        render_empty_state()
     else:
-        st.info(f"이미지 파일이 아직 없습니다: {path}")
+        st.dataframe(priority_table, use_container_width=True, hide_index=True)
 
-
-def main():
-    features, candidates = load_data()
-
-    st.title("💧 충남 AquaGuard AI")
-    st.caption(
-        "올담 공공데이터 기반 농업용수 부족 위험 예측 · 대체 수원 후보 추천 · 행정 리포트 MVP"
+    render_section_header(
+        "성능 검증 요약",
+        "모델 성능 파일에 실제 존재하는 지표만 보여줍니다. 없는 지표는 표시하지 않습니다.",
     )
+    if performance_cards:
+        render_kpi_cards(performance_cards[:5])
+        if len(performance_cards) > 5:
+            render_kpi_cards(performance_cards[5:])
+    else:
+        st.info("성능 검증 지표 컬럼 또는 리포트 항목이 없어 표시할 수 있는 지표가 없습니다.")
 
-    st.warning(
-        "본 서비스는 공개데이터 기반 행정 참고자료입니다. 실제 대체 수원 공급 가능 여부는 "
-        "관로, 수리권, 수질, 현장 접근성, 행정 협의 등을 추가 검토해야 합니다."
-    )
-
-    avg_score = features["final_water_risk_score"].mean()
-    top_row = features.sort_values("final_water_risk_score", ascending=False).iloc[0]
-    caution_or_above = features[features["final_water_risk_level"].isin(["주의", "경계", "심각"])].shape[0]
-    candidate_count = len(candidates)
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("충남 평균 위험도", f"{avg_score:.1f}점")
-    c2.metric("주의 이상 시·군", f"{caution_or_above}곳")
-    c3.metric("최고 위험 지역", f"{top_row['sigungu']}")
-    c4.metric("대체 수원 후보", f"{candidate_count}건")
-
-    st.sidebar.header("지역 선택")
-    sigungu_options = features.sort_values("final_priority_rank")["sigungu"].tolist()
-    default_idx = 0
-    selected_sigungu = st.sidebar.selectbox("시·군 선택", sigungu_options, index=default_idx)
-
-    selected_row = features[features["sigungu"] == selected_sigungu].iloc[0]
-    selected_cands = selected_candidates(candidates, selected_sigungu)
-
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("선택 지역 요약")
-    st.sidebar.write(f"**순위:** {int(selected_row['final_priority_rank'])}위")
-    st.sidebar.write(f"**위험도:** {selected_row['final_water_risk_score']:.1f}점")
-    st.sidebar.write(f"**단계:** {selected_row['final_water_risk_level']}")
-    st.sidebar.write(f"**주요 원인:** {selected_row['main_risk_driver']}")
-    st.sidebar.write(f"**상세:** {build_reason_detail(selected_row)}")
-
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(
-        ["위험지도", "지역 상세", "대체 수원 후보", "전체 순위", "보고서용 이미지"]
-    )
-
-    with tab1:
-        st.subheader("시·군별 농업용수 부족 위험지도")
-        st.plotly_chart(make_risk_map(features, selected_sigungu), use_container_width=True)
-
-        st.markdown("#### 선택 지역 주요 원인 해석")
-        explanation_df = build_component_explanation(selected_row)
-        top_factor = explanation_df.iloc[0]
-
-        st.info(
-            f"{selected_sigungu}의 가장 큰 위험 기여 요인은 "
-            f"'{top_factor['지표']}'입니다. "
-            f"원점수는 {top_factor['원점수']}점, 가중 기여점수는 {top_factor['위험 기여점수']}점입니다. "
-            f"{top_factor['해석']}"
-        )
-
-        st.dataframe(
-            explanation_df,
-            use_container_width=True,
-            hide_index=True,
-        )
-
-        st.markdown("#### 전체 시·군 위험도 요약")
-
-        ranking_view = features[[
-            "final_priority_rank",
-            "sigungu",
-            "final_water_risk_score",
-            "final_water_risk_level",
-            "main_risk_driver",
-            "rain_shortage_score",
-            "reservoir_risk_score",
-            "groundwater_dependency_score",
-            "crop_water_demand_score",
-            "alternative_source_access_shortage_score",
-        ]].copy()
-
-        ranking_view["main_reason_detail"] = ranking_view.apply(build_reason_detail, axis=1)
-
-        display_cols = [
-            "final_priority_rank",
-            "sigungu",
-            "final_water_risk_score",
-            "final_water_risk_level",
-            "main_risk_driver",
-            "main_reason_detail",
-        ]
-
-        st.dataframe(
-            ranking_view[display_cols].rename(columns={
-                "final_priority_rank": "순위",
-                "sigungu": "시·군",
-                "final_water_risk_score": "위험도",
-                "final_water_risk_level": "단계",
-                "main_risk_driver": "주요 원인",
-                "main_reason_detail": "주요 원인 상세",
-            }),
-            use_container_width=True,
-            hide_index=True,
-        )
-
-    with tab2:
-        st.subheader(f"{selected_sigungu} 상세 분석")
-
-        d1, d2, d3, d4 = st.columns(4)
-        d1.metric("최종 위험도", f"{selected_row['final_water_risk_score']:.1f}점")
-        d2.markdown("위험 단계")
-        d2.markdown(risk_badge(selected_row["final_water_risk_level"]), unsafe_allow_html=True)
-        d3.metric("우선순위", f"{int(selected_row['final_priority_rank'])}위")
-        d4.metric("주요 원인", str(selected_row["main_risk_driver"]))
-
-        st.plotly_chart(make_component_chart(selected_row), use_container_width=True)
-
-        st.markdown("#### 주요 지표")
-        indicator_cols = [
-            "rain_shortage_score",
-            "reservoir_risk_score",
-            "groundwater_dependency_score",
-            "crop_water_demand_score",
-            "alternative_source_access_shortage_score",
-            "agri_impact_index",
-            "well_support_score",
-            "well_shortage_score",
-            "avg_reservoir_rate",
-            "reservoir_count",
-            "groundwater_well_count",
-            "drilling_developed_well_count",
-        ]
-
-        available_cols = [c for c in indicator_cols if c in features.columns]
-        indicator_table = selected_row[available_cols].to_frame("값").reset_index()
-        indicator_table = indicator_table.rename(columns={"index": "지표"})
-        st.dataframe(indicator_table, use_container_width=True, hide_index=True)
-
-    with tab3:
-        st.subheader(f"{selected_sigungu} 대체 수원 후보 TOP 5")
-
-        if selected_cands.empty:
-            st.info("해당 지역의 대체 수원 후보가 없습니다.")
+    render_section_header("위험도 분석", "각 차트는 하나의 질문에 답하도록 구성했습니다.")
+    left, right = st.columns([1.25, 1])
+    with left:
+        ranking_fig = make_ranking_chart(filtered, f"{mode}: 어느 시·군을 먼저 볼 것인가?", top_n)
+        if ranking_fig:
+            st.plotly_chart(ranking_fig, use_container_width=True)
+            st.caption("위험점수가 높고 순위가 빠를수록 점검 우선순위가 높습니다.")
         else:
-            view_cols = [
-                "candidate_rank",
-                "candidate_reservoir_name",
-                "candidate_sigungu",
-                "distance_km",
-                "candidate_reservoir_rate",
-                "benefit_area",
-                "effective_capacity",
-                "candidate_score",
-                "recommendation_reason",
-            ]
-            view_cols = [c for c in view_cols if c in selected_cands.columns]
+            render_empty_state()
+    with right:
+        dist_fig = make_distribution_chart(filtered)
+        if dist_fig:
+            st.plotly_chart(dist_fig, use_container_width=True)
+            st.caption("위험등급별 점수 분포를 보면 특정 구간에 대상이 몰려 있는지 확인할 수 있습니다.")
+        else:
+            render_empty_state()
 
-            display = selected_cands[view_cols].copy()
-            display = display.rename(columns={
-                "candidate_rank": "순위",
-                "candidate_reservoir_name": "후보 저수지",
-                "candidate_sigungu": "소속 시·군",
-                "distance_km": "거리(km)",
-                "candidate_reservoir_rate": "후보 저수율",
-                "benefit_area": "수혜면적",
-                "effective_capacity": "유효저수량",
-                "candidate_score": "후보점수",
-                "recommendation_reason": "추천 사유",
-            })
+    map_fig = make_map_chart(filtered)
+    if map_fig:
+        st.plotly_chart(map_fig, use_container_width=True)
+        st.caption("마커 크기는 위험점수, 색상은 위험등급을 의미합니다.")
 
-            st.dataframe(display, use_container_width=True, hide_index=True)
+    left, right = st.columns(2)
+    with left:
+        driver_fig = make_driver_chart(features)
+        if driver_fig:
+            st.plotly_chart(driver_fig, use_container_width=True)
+            st.caption("최종 산정 결과에서 주요 위험 원인별 평균 위험점수를 비교합니다.")
+        else:
+            st.info("main_risk_driver 또는 final_water_risk_score 컬럼이 없어 위험 원인 차트를 건너뛰었습니다.")
+    with right:
+        component_fig = make_component_chart(features, focus_target)
+        if component_fig:
+            st.plotly_chart(component_fig, use_container_width=True)
+            st.caption("원점수와 가중 기여점수를 함께 보면 해당 시·군의 위험 원인을 빠르게 설명할 수 있습니다.")
+        else:
+            st.info("구성요소 점수 컬럼이 없어 상세 구성 차트를 건너뛰었습니다.")
 
-            st.download_button(
-                label="선택 지역 후보 CSV 다운로드",
-                data=selected_cands.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"{selected_sigungu}_alternative_source_top5.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
+    ai_fig = make_ai_scatter(ai_summary)
+    if ai_fig:
+        st.plotly_chart(ai_fig, use_container_width=True)
+        st.caption("점선보다 아래에 있는 대상은 7일 후 예측 저수율이 현재보다 낮은 경우입니다.")
 
-        st.markdown("#### 추천 산식")
-        st.code(
-            "candidate_score = 0.40 * distance_score + 0.35 * reservoir_surplus_score + 0.25 * benefit_area_score",
-            language="text",
+    render_section_header(
+        "대체 수원 후보",
+        f"{focus_target} 기준으로 이미 생성된 후보 결과를 보여줍니다.",
+    )
+    focus_candidates = selected_candidates(candidates, focus_target)
+    if focus_candidates.empty:
+        st.info("조건에 맞는 대체 수원 후보 데이터가 없습니다.")
+    else:
+        st.dataframe(candidate_display(focus_candidates), use_container_width=True, hide_index=True)
+        st.download_button(
+            label=f"{focus_target} 대체 수원 후보 CSV 다운로드",
+            data=focus_candidates.to_csv(index=False).encode("utf-8-sig"),
+            file_name=f"{focus_target}_alternative_source_top5.csv",
+            mime="text/csv",
+            use_container_width=True,
         )
 
-    with tab4:
-        st.subheader("전체 위험도 순위")
-        st.plotly_chart(make_ranking_chart(features), use_container_width=True)
+    render_section_header("상세 데이터 및 원본 결과 확인", "요약 판단 이후 필요한 원본 산정 결과를 확인합니다.")
+    detailed = filtered.rename(
+        columns={
+            "priority_rank": "우선순위",
+            "sigungu": "시·군",
+            "risk_score": "위험점수",
+            "risk_level": "위험등급",
+            "main_risk_driver": "주요 위험 원인",
+            "recommended_action": "권고 조치",
+            "basis_date": "기준일",
+            "analysis_mode": "분석 기준",
+        }
+    )
+    st.dataframe(detailed, use_container_width=True, hide_index=True)
 
+    with st.expander("원본 최종 산정 결과 보기"):
+        st.dataframe(features, use_container_width=True, hide_index=True)
         st.download_button(
-            label="전체 위험도 테이블 CSV 다운로드",
+            label="최종 산정 결과 CSV 다운로드",
             data=features.to_csv(index=False).encode("utf-8-sig"),
             file_name="aquaguard_sigungu_features.csv",
             mime="text/csv",
             use_container_width=True,
         )
 
-    with tab5:
-        st.subheader("보고서·발표자료용 이미지")
-        render_image_if_exists(FIG_RANKING, "시·군별 최종 위험도 순위")
-        render_image_if_exists(FIG_COMPONENTS, "위험도 구성요소별 기여도")
-        render_image_if_exists(FIG_SCATTER, "저수율 위험도 vs 대체 수원 접근성 부족도")
-        render_image_if_exists(FIG_TOP5, "우선 점검 대상 TOP 5")
-        render_image_if_exists(FIG_ALT, "위험지역별 1순위 대체 수원 후보")
+    with st.expander("성능 검증·학습 이력 원본 보기"):
+        if not gru_history.empty:
+            st.markdown("#### GRU 학습 이력")
+            st.dataframe(gru_history, use_container_width=True, hide_index=True)
+        else:
+            st.info("GRU 학습 이력 파일이 없습니다.")
+        if not ae_history.empty:
+            st.markdown("#### AutoEncoder 학습 이력")
+            st.dataframe(ae_history, use_container_width=True, hide_index=True)
+        else:
+            st.info("AutoEncoder 학습 이력 파일이 없습니다.")
+        if report_text:
+            st.markdown("#### AI 모델 리포트")
+            st.markdown(report_text)
+        if not validation.empty:
+            st.markdown("#### 최종 검증 체크 결과")
+            st.dataframe(validation, use_container_width=True, hide_index=True)
 
-    st.markdown("---")
-    st.subheader("행정 리포트 다운로드")
+    with st.expander("보고서용 이미지 확인"):
+        for path, caption in [
+            (FIG_RANKING, "시·군별 최종 위험도 순위"),
+            (FIG_COMPONENTS, "위험도 구성요소별 기여도"),
+            (FIG_SCATTER, "저수율 위험도 vs 대체 수원 접근성 부족도"),
+            (FIG_TOP5, "우선 평가 대상 TOP 5"),
+            (FIG_ALT, "위험지역별 1순위 대체 수원 후보"),
+        ]:
+            if path.exists():
+                st.image(str(path), caption=caption, use_container_width=True)
+            else:
+                st.info(f"이미지 파일이 없습니다: {path}")
 
-    report_html = build_html_report(selected_row, selected_cands)
-    download_html_button(
-        report_html,
-        f"AquaGuard_AI_{selected_sigungu}_행정리포트.html",
+    render_section_header("설명 notes", "비기술 검토자가 볼 때 필요한 해석 기준만 짧게 남겼습니다.")
+    st.info(
+        "AquaGuard AI 결과는 공개데이터 기반 의사결정 참고자료입니다. 실제 대응은 현장 저수율, 관로 연결성, "
+        "수리권, 수질, 행정 협의를 함께 확인해야 합니다."
     )
+
+    selected_row = filtered[filtered["sigungu"] == focus_target]
+    if selected_row.empty:
+        selected_row = filtered.sort_values(["priority_rank", "risk_score"], ascending=[True, False]).head(1)
+    if not selected_row.empty:
+        report_html = build_html_report(selected_row.iloc[0], focus_candidates)
+        st.download_button(
+            label=f"{focus_target} HTML 의사결정 리포트 다운로드",
+            data=report_html.encode("utf-8-sig"),
+            file_name=f"AquaGuard_AI_{focus_target}_decision_report.html",
+            mime="text/html",
+            use_container_width=True,
+        )
+
+    show_load_messages([candidate_msg, live_msg, ai_msg, gru_msg, ae_msg, validation_msg, report_msg])
 
 
 if __name__ == "__main__":
