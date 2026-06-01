@@ -506,7 +506,7 @@ def make_rate_compare_chart(watch: pd.DataFrame, top_n: int):
     return fig
 
 
-def render_sidebar(watch: pd.DataFrame) -> tuple[list[str], list[str], int, str]:
+def render_sidebar(watch: pd.DataFrame) -> tuple[list[str], list[str]]:
     sigungu_options = watch.sort_values("watch_rank")["sigungu"].dropna().astype(str).tolist() if "watch_rank" in watch.columns else sorted(watch["sigungu"].dropna().astype(str).tolist())
     levels = watch["watch_level"].dropna().astype(str).unique().tolist() if "watch_level" in watch.columns else []
 
@@ -523,7 +523,9 @@ def render_sidebar(watch: pd.DataFrame) -> tuple[list[str], list[str], int, str]
         if st.button("기본값으로 초기화", use_container_width=True):
             st.session_state.watch_sigungu_filter = sigungu_options
             st.session_state.watch_level_filter = levels
-            st.session_state.watch_top_n = 10
+            st.session_state.watch_summary_top_n = 10
+            st.session_state.watch_risk_top_n = 10
+            st.session_state.watch_facility_top_n = 10
             st.rerun()
 
         st.markdown("#### 기간")
@@ -531,14 +533,11 @@ def render_sidebar(watch: pd.DataFrame) -> tuple[list[str], list[str], int, str]
 
         st.markdown("#### 지역/대상")
         selected_regions = st.multiselect("시·군", sigungu_options, key="watch_sigungu_filter")
-        focus = st.selectbox("상세 확인 대상", selected_regions or sigungu_options, index=0 if (selected_regions or sigungu_options) else None)
 
         st.markdown("#### 모델/위험등급")
         selected_levels = st.multiselect("Watch 등급", levels, key="watch_level_filter")
-        max_top = max(5, min(15, len(watch))) if not watch.empty else 5
-        top_n = st.slider("우선순위 표시 수", 5, max_top, min(st.session_state.get("watch_top_n", 10), max_top), key="watch_top_n")
 
-    return selected_regions, selected_levels, top_n, focus
+    return selected_regions, selected_levels
 
 
 def main() -> None:
@@ -588,7 +587,7 @@ def main() -> None:
         latest_date(watch, ["reservoir_latest_date"]),
     )
 
-    selected_regions, selected_levels, top_n, focus = render_sidebar(watch)
+    selected_regions, selected_levels = render_sidebar(watch)
     filtered = watch.copy()
     if selected_regions:
         filtered = filtered[filtered["sigungu"].isin(selected_regions)]
@@ -599,7 +598,7 @@ def main() -> None:
         f"""
         <div class="ag-filter">
         현재 필터: 지역 <b>{len(selected_regions) if selected_regions else 0}개</b> ·
-        Watch 등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> · 상세 대상 <b>{focus or "N/A"}</b>
+        Watch 등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b>
         </div>
         """,
         unsafe_allow_html=True,
@@ -613,14 +612,20 @@ def main() -> None:
         render_empty_state()
         st.stop()
 
-    selected_facility, removed_duplicates = prepare_facility(facility, focus)
-    facility_for_table = attach_latest_oldam_to_facilities(selected_facility, oldam_today, focus)
-
     summary_tab, risk_tab, raw_tab = st.tabs(
         ["Watchlist 요약", "저수율·시설 점검", "공개·원본 데이터"]
     )
 
     with summary_tab:
+        summary_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
+        summary_top_n = st.slider(
+            "점검 우선순위 표시 수",
+            5,
+            summary_max_top,
+            min(st.session_state.get("watch_summary_top_n", 10), summary_max_top),
+            key="watch_summary_top_n",
+            help="Watchlist 요약 탭의 점검 우선순위 표에만 적용됩니다.",
+        )
         render_kpi_cards(
             [
                 ("Watch 대상 시·군", f"{len(filtered):,}곳", "현재 필터 기준 Watchlist 대상 수입니다."),
@@ -631,25 +636,49 @@ def main() -> None:
             ]
         )
         render_section_header("점검 우선순위", "저수율 위험점수가 높고 Watch 순위가 빠른 시·군을 먼저 확인합니다.")
-        st.dataframe(format_display_dataframe(make_watch_priority_table(filtered, top_n)), use_container_width=True, hide_index=True)
+        st.dataframe(format_display_dataframe(make_watch_priority_table(filtered, summary_top_n)), use_container_width=True, hide_index=True)
 
     with risk_tab:
+        risk_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
+        risk_top_n = st.slider(
+            "저수율 차트 표시 수",
+            5,
+            risk_max_top,
+            min(st.session_state.get("watch_risk_top_n", 10), risk_max_top),
+            key="watch_risk_top_n",
+            help="저수율 위험도 차트에만 적용됩니다.",
+        )
         render_section_header("저수율 위험도 해석", "평균과 최저 저수율을 함께 보며 지역 단위 위험을 확인합니다.")
         left, right = st.columns(2)
         with left:
-            watch_fig = make_watch_bar(filtered, top_n)
+            watch_fig = make_watch_bar(filtered, risk_top_n)
             if watch_fig:
                 st.plotly_chart(watch_fig, use_container_width=True)
                 st.caption("막대가 길수록 저수율 관점에서 우선 확인할 필요가 큽니다.")
             else:
                 st.info("reservoir_risk_score 컬럼이 없어 위험도 차트를 건너뛰었습니다.")
         with right:
-            rate_fig = make_rate_compare_chart(filtered, top_n)
+            rate_fig = make_rate_compare_chart(filtered, risk_top_n)
             if rate_fig:
                 st.plotly_chart(rate_fig, use_container_width=True)
                 st.caption("최저 저수율이 평균보다 크게 낮으면 특정 시설 중심의 현장 확인이 필요합니다.")
             else:
                 st.info("평균·최저 저수율 컬럼이 없어 비교 차트를 건너뛰었습니다.")
+
+        facility_options = filtered["sigungu"].dropna().astype(str).drop_duplicates().tolist() if "sigungu" in filtered.columns else []
+        if st.session_state.get("watch_facility_focus") not in facility_options and facility_options:
+            st.session_state.watch_facility_focus = facility_options[0]
+        focus = st.selectbox(
+            "시설 점검 시·군 선택",
+            facility_options,
+            key="watch_facility_focus",
+            help="이 선택은 시설별 점검 우선순위와 최신 공개 저수지 현황에만 적용됩니다.",
+        ) if facility_options else None
+        if focus is None:
+            render_empty_state()
+            return
+        selected_facility, removed_duplicates = prepare_facility(facility, focus)
+        facility_for_table = attach_latest_oldam_to_facilities(selected_facility, oldam_today, focus)
 
         render_section_header(f"{focus} 시설별 점검 우선순위", "선택한 시·군 안에서 먼저 확인할 저수지 시설입니다.")
         render_selected_region_summary(watch, focus)
@@ -661,7 +690,16 @@ def main() -> None:
         if "facility_latest_reservoir_rate" in facility_for_table.columns and facility_for_table["facility_latest_reservoir_rate"].isna().all():
             st.info("시설별 최신 저수율은 원천 데이터에서 직접 제공되지 않아, 시·군 단위 저수율과 시설 규모를 결합해 우선순위를 산정했습니다.")
 
-        facility_top = make_facility_priority_table(facility_for_table, top_n)
+        facility_max_top = max(5, min(15, len(facility_for_table))) if not facility_for_table.empty else 5
+        facility_top_n = st.slider(
+            "시설 우선순위 표시 수",
+            5,
+            facility_max_top,
+            min(st.session_state.get("watch_facility_top_n", 10), facility_max_top),
+            key="watch_facility_top_n",
+            help="선택한 시·군의 시설별 점검 표에만 적용됩니다.",
+        )
+        facility_top = make_facility_priority_table(facility_for_table, facility_top_n)
         if facility_top.empty:
             render_empty_state("선택한 시·군의 저수지 시설 정보가 없습니다.")
         else:

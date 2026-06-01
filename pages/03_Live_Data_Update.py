@@ -63,6 +63,16 @@ def inject_css() -> None:
             padding: 0.85rem 1rem;
             margin-top: 0.3rem;
         }
+        .ag-service-box {
+            background: #eff6ff;
+            border: 1px solid #93c5fd;
+            border-radius: 8px;
+            color: #334155;
+            font-size: 0.9rem;
+            line-height: 1.45;
+            margin-top: 0.7rem;
+            padding: 0.8rem 1rem;
+        }
         .ag-basis-label {
             color: #475569;
             font-size: 0.78rem;
@@ -97,7 +107,7 @@ def render_page_header(title: str, service_definition: str, latest_basis: str) -
     left, right = st.columns([3.4, 1.15])
     with left:
         st.markdown(f'<h1 class="ag-page-title">{title}</h1>', unsafe_allow_html=True)
-        st.caption(service_definition)
+        st.markdown(f'<div class="ag-service-box">{service_definition}</div>', unsafe_allow_html=True)
     with right:
         st.markdown(
             f"""
@@ -359,7 +369,7 @@ def available_levels(summary: pd.DataFrame) -> list[str]:
     return [x for x in order if x in found] + sorted([x for x in found if x not in order])
 
 
-def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], int, str, bool]:
+def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], bool]:
     regions = summary.sort_values("final_live_priority_rank")["sigungu"].dropna().astype(str).tolist() if "final_live_priority_rank" in summary.columns else sorted(summary["sigungu"].dropna().astype(str).tolist())
     levels = available_levels(summary)
     if "live_region_filter" not in st.session_state:
@@ -374,7 +384,8 @@ def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], int, st
         if st.button("기본값으로 초기화", use_container_width=True):
             st.session_state.live_region_filter = regions
             st.session_state.live_level_filter = levels
-            st.session_state.live_top_n = 10
+            st.session_state.live_chart_top_n = 10
+            st.session_state.live_summary_top_n = 10
             st.session_state.only_updated_sources = False
             st.rerun()
 
@@ -383,15 +394,12 @@ def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], int, st
 
         st.markdown("#### 지역/대상")
         selected_regions = st.multiselect("시·군", regions, key="live_region_filter")
-        focus = st.selectbox("상세 확인 대상", selected_regions or regions, index=0 if (selected_regions or regions) else None)
 
         st.markdown("#### 모델/위험등급")
         selected_levels = st.multiselect("Live 위험등급", levels, key="live_level_filter")
         only_updated = st.checkbox("최신 원천데이터 반영 지역만 보기", key="only_updated_sources")
-        max_top = max(5, min(15, len(summary))) if not summary.empty else 5
-        top_n = st.slider("우선순위 표시 수", 5, max_top, min(st.session_state.get("live_top_n", 10), max_top), key="live_top_n")
 
-    return selected_regions, selected_levels, top_n, focus, only_updated
+    return selected_regions, selected_levels, only_updated
 
 
 def build_priority_table(summary: pd.DataFrame, top_n: int) -> pd.DataFrame:
@@ -634,7 +642,7 @@ def main() -> None:
         latest_basis,
     )
 
-    selected_regions, selected_levels, top_n, focus, only_updated = render_sidebar(summary)
+    selected_regions, selected_levels, only_updated = render_sidebar(summary)
     filtered = summary.copy()
     if selected_regions:
         filtered = filtered[filtered["sigungu"].isin(selected_regions)]
@@ -650,7 +658,7 @@ def main() -> None:
         f"""
         <div class="ag-filter">
         현재 필터: 지역 <b>{len(selected_regions) if selected_regions else 0}개</b> ·
-        Live 등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> · 상세 대상 <b>{focus or "N/A"}</b> ·
+        Live 등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> ·
         최신 원천만 <b>{"ON" if only_updated else "OFF"}</b>
         </div>
         """,
@@ -677,13 +685,22 @@ def main() -> None:
         render_empty_state()
         st.stop()
 
-    summary_tab, chart_tab, detail_tab, raw_tab = st.tabs(
-        ["요약·우선순위", "위험도 차트", "지역 상세해석", "원본·검증"]
+    chart_tab, detail_tab, summary_tab, raw_tab = st.tabs(
+        ["위험도 차트", "지역 상세해석", "요약·우선순위", "원본·검증"]
     )
 
     with summary_tab:
+        summary_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
+        summary_top_n = st.slider(
+            "우선순위 표시 수",
+            5,
+            summary_max_top,
+            min(st.session_state.get("live_summary_top_n", 10), summary_max_top),
+            key="live_summary_top_n",
+            help="요약·우선순위 탭의 점검 우선순위 표에만 적용됩니다.",
+        )
         render_section_header("점검 우선순위", "Live 업데이트 후 가장 먼저 확인할 시·군입니다.")
-        priority = build_priority_table(filtered, top_n)
+        priority = build_priority_table(filtered, summary_top_n)
         if priority.empty:
             render_empty_state()
         else:
@@ -702,17 +719,26 @@ def main() -> None:
         st.dataframe(format_display_dataframe(status_table), use_container_width=True, hide_index=True)
 
     with chart_tab:
+        chart_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
+        chart_top_n = st.slider(
+            "차트 표시 수",
+            5,
+            chart_max_top,
+            min(st.session_state.get("live_chart_top_n", 10), chart_max_top),
+            key="live_chart_top_n",
+            help="위험도 차트 탭의 순위·변화량 차트에만 적용됩니다.",
+        )
         render_section_header("Live 위험도 분석", "현재 위험도와 기준 대비 변화량을 분리해서 확인합니다.")
         left, right = st.columns(2)
         with left:
-            ranking_fig = make_live_ranking_chart(filtered, top_n)
+            ranking_fig = make_live_ranking_chart(filtered, chart_top_n)
             if ranking_fig:
                 st.plotly_chart(ranking_fig, use_container_width=True)
                 st.caption("막대가 길수록 오늘 기준 점검 우선순위가 높습니다.")
             else:
                 st.info("final_live_water_risk_score 컬럼이 없어 위험도 차트를 건너뛰었습니다.")
         with right:
-            delta_fig = make_delta_chart(filtered, top_n)
+            delta_fig = make_delta_chart(filtered, chart_top_n)
             if delta_fig:
                 st.plotly_chart(delta_fig, use_container_width=True)
                 st.caption("0보다 크면 기준 산정 대비 Live 위험도가 상승한 지역입니다.")
@@ -737,7 +763,7 @@ def main() -> None:
 
     with detail_tab:
         render_section_header("지역 상세 해석", "콤보박스에서 시·군을 선택해 Live 변화 원인을 확인합니다.")
-        render_live_region_detail(summary, filtered, focus)
+        render_live_region_detail(summary, filtered, None)
 
     with raw_tab:
         render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 원본 Live 결과와 검증 자료를 확인합니다.")

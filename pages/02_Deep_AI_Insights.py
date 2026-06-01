@@ -509,7 +509,7 @@ def render_sidebar(
     live_basis_month: str,
     default_comparison_month: str,
     month_options: list[str],
-) -> tuple[list[str], list[str], int, str, str]:
+) -> tuple[list[str], list[str], str]:
     regions = summary.sort_values("deep_ai_rank")["sigungu"].dropna().astype(str).tolist() if "deep_ai_rank" in summary.columns else sorted(summary["sigungu"].dropna().astype(str).tolist())
     levels = available_levels(summary)
     if "ai_region_filter" not in st.session_state:
@@ -526,6 +526,8 @@ def render_sidebar(
             st.session_state.ai_region_filter = regions
             st.session_state.ai_level_filter = levels
             st.session_state.ai_top_n = 10
+            st.session_state.ai_basis_top_n = 10
+            st.session_state.ai_insight_top_n = 10
             st.session_state.ai_comparison_month = default_comparison_month
             st.rerun()
 
@@ -549,14 +551,11 @@ def render_sidebar(
 
         st.markdown("#### 지역/대상")
         selected_regions = st.multiselect("시·군", regions, key="ai_region_filter")
-        focus = st.selectbox("상세 확인 대상", selected_regions or regions, index=0 if (selected_regions or regions) else None)
 
         st.markdown("#### 모델/위험등급")
         selected_levels = st.multiselect("Deep AI 등급", levels, key="ai_level_filter")
-        max_top = max(5, min(14, len(summary))) if not summary.empty else 5
-        top_n = st.slider("우선순위 표시 수", 5, max_top, min(st.session_state.get("ai_top_n", 10), max_top), key="ai_top_n")
 
-    return selected_regions, selected_levels, top_n, focus, selected_comparison_month
+    return selected_regions, selected_levels, selected_comparison_month
 
 
 def build_priority_table(summary: pd.DataFrame, top_n: int) -> pd.DataFrame:
@@ -720,7 +719,7 @@ def main() -> None:
     default_comparison_month, comparison_fallback = select_default_ai_comparison_month(live_basis_month, training_months)
     month_options = training_months or ([ai_output_month] if ai_output_month != "N/A" else ["N/A"])
 
-    selected_regions, selected_levels, top_n, focus, selected_comparison_month = render_sidebar(
+    selected_regions, selected_levels, selected_comparison_month = render_sidebar(
         summary,
         live_basis_month,
         default_comparison_month,
@@ -748,7 +747,7 @@ def main() -> None:
         <div class="ag-filter">
         현재 필터: 지역 <b>{len(selected_regions) if selected_regions else 0}개</b> ·
         Deep AI 등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> ·
-        AI 비교 기준월 <b>{selected_comparison_month}</b> · 상세 대상 <b>{focus or "N/A"}</b>
+        AI 비교 기준월 <b>{selected_comparison_month}</b>
         </div>
         """,
         unsafe_allow_html=True,
@@ -782,12 +781,21 @@ def main() -> None:
     basis_tab, insight_tab, raw_tab = st.tabs(["AI 계절·성능", "예측·이상탐지", "원본 결과"])
 
     with basis_tab:
+        basis_max_top = max(5, min(14, len(filtered))) if not filtered.empty else 5
+        basis_top_n = st.slider(
+            "계절 비교 표시 수",
+            5,
+            basis_max_top,
+            min(st.session_state.get("ai_basis_top_n", 10), basis_max_top),
+            key="ai_basis_top_n",
+            help="AI 계절 비교 기준 탭의 학습 데이터 요약 차트에만 적용됩니다.",
+        )
         render_section_header(
             "AI 계절 비교 기준",
             "현재 Live 월과 같은 계절의 학습 데이터 월을 골라 AI 해석의 계절 기준을 분리해서 보여줍니다.",
         )
         historical_snapshot = build_historical_month_snapshot(training_history, selected_comparison_month)
-        historical_fig = make_historical_comparison_chart(historical_snapshot, top_n)
+        historical_fig = make_historical_comparison_chart(historical_snapshot, basis_top_n)
         if historical_fig:
             st.plotly_chart(historical_fig, use_container_width=True)
             st.caption(
@@ -814,8 +822,17 @@ def main() -> None:
             st.info("epoch 또는 valid_mae 컬럼이 없어 GRU 학습 추이 차트를 건너뛰었습니다.")
 
     with insight_tab:
+        insight_max_top = max(5, min(14, len(filtered))) if not filtered.empty else 5
+        insight_top_n = st.slider(
+            "예측·우선순위 표시 수",
+            5,
+            insight_max_top,
+            min(st.session_state.get("ai_insight_top_n", 10), insight_max_top),
+            key="ai_insight_top_n",
+            help="점검 우선순위와 예측·이상탐지 차트에만 적용됩니다.",
+        )
         render_section_header("점검 우선순위", "AI 예측과 이상탐지 결과를 결합해 먼저 확인할 지역입니다.")
-        priority = build_priority_table(filtered, top_n)
+        priority = build_priority_table(filtered, insight_top_n)
         if priority.empty:
             render_empty_state()
         else:
@@ -824,7 +841,7 @@ def main() -> None:
         render_section_header("예측·이상탐지 분석", "각 차트는 위험 순위, 예측 변화, 이상 패턴을 분리해서 보여줍니다.")
         left, right = st.columns(2)
         with left:
-            ranking_fig = make_ai_ranking_chart(filtered, top_n)
+            ranking_fig = make_ai_ranking_chart(filtered, insight_top_n)
             if ranking_fig:
                 st.plotly_chart(ranking_fig, use_container_width=True)
                 st.caption("Deep AI 위험도는 GRU 예측 위험도와 AutoEncoder 이상점수를 결합한 결과입니다.")
@@ -838,13 +855,25 @@ def main() -> None:
             else:
                 st.info("현재/예측 저수율 컬럼이 없어 예측 산점도를 건너뛰었습니다.")
 
-        anomaly_fig = make_anomaly_chart(filtered, top_n)
+        anomaly_fig = make_anomaly_chart(filtered, insight_top_n)
         if anomaly_fig:
             st.plotly_chart(anomaly_fig, use_container_width=True)
             st.caption("이상점수가 높을수록 과거 정상 패턴과 다른 저수율 흐름입니다.")
         else:
             st.info("autoencoder_anomaly_score 컬럼이 없어 이상탐지 차트를 건너뛰었습니다.")
 
+        detail_options = filtered["sigungu"].dropna().astype(str).drop_duplicates().tolist() if "sigungu" in filtered.columns else []
+        if not detail_options:
+            render_empty_state()
+            return
+        if st.session_state.get("ai_detail_region_select") not in detail_options:
+            st.session_state.ai_detail_region_select = detail_options[0]
+        focus = st.selectbox(
+            "상세 해석 지역 선택",
+            detail_options,
+            key="ai_detail_region_select",
+            help="이 선택은 현재 탭의 상세 해석에만 적용됩니다.",
+        )
         render_section_header(f"{focus} 상세 해석", "선택한 지역의 예측값과 이상탐지 결과를 같은 행 기준으로 설명합니다.")
         focus_row = filtered[filtered["sigungu"] == focus]
         if focus_row.empty:

@@ -752,15 +752,25 @@ def make_driver_chart(features: pd.DataFrame) -> go.Figure | None:
         .reset_index()
         .sort_values("평균위험점수", ascending=False)
     )
-    fig = px.bar(
+    fig = px.pie(
         driver_df,
-        x="평균위험점수",
-        y="main_risk_driver",
-        orientation="h",
-        text="대상수",
+        names="main_risk_driver",
+        values="평균위험점수",
+        hole=0.55,
+        custom_data=["대상수"],
         title="주요 위험 원인별 평균 위험점수: 어떤 요인이 우선인가?",
+        color_discrete_sequence=["#2563eb", "#0f766e", "#f59e0b", "#7c3aed", "#dc2626", "#64748b"],
     )
-    fig.update_layout(xaxis_title="평균 위험점수", yaxis_title="주요 위험 원인", height=360)
+    fig.update_traces(
+        texttemplate="%{label}<br>%{value:.1f}점",
+        textposition="inside",
+        hovertemplate="주요 위험 원인=%{label}<br>평균 위험점수=%{value:.2f}점<br>대상 수=%{customdata[0]}곳<extra></extra>",
+    )
+    fig.update_layout(
+        height=380,
+        margin=dict(l=20, r=20, t=70, b=30),
+        legend_title_text="주요 위험 원인",
+    )
     return fig
 
 
@@ -806,7 +816,7 @@ def make_component_chart(features: pd.DataFrame, sigungu: str) -> go.Figure | No
     return fig
 
 
-def make_map_chart(df: pd.DataFrame) -> go.Figure | None:
+def make_map_chart(df: pd.DataFrame, map_style: str = "carto-positron") -> go.Figure | None:
     if df.empty:
         return None
     map_df = df.copy()
@@ -826,11 +836,11 @@ def make_map_chart(df: pd.DataFrame) -> go.Figure | None:
         hover_data={"risk_score": ":.1f", "main_risk_driver": True, "lat": False, "lon": False, "marker_size": False},
         color_discrete_map=RISK_COLORS,
         zoom=7,
-        height=430,
+        height=560,
         center={"lat": 36.55, "lon": 126.95},
         title="지도 보기: 위험 대상은 어디에 집중되어 있는가?",
     )
-    fig.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=60, b=0), legend_title_text="위험등급")
+    fig.update_layout(mapbox_style=map_style, margin=dict(l=0, r=0, t=60, b=0), legend_title_text="위험등급")
     return fig
 
 
@@ -954,7 +964,7 @@ def build_html_report(row: pd.Series, candidates: pd.DataFrame) -> str:
     """
 
 
-def render_sidebar(source_df: pd.DataFrame) -> tuple[str, list[str], list[str], int, str]:
+def render_sidebar(source_df: pd.DataFrame) -> str:
     all_modes = ["최종 산정", "Live 업데이트", "Deep AI 예측"]
     all_regions = sorted(source_df["sigungu"].dropna().astype(str).unique().tolist()) if not source_df.empty else []
 
@@ -969,16 +979,17 @@ def render_sidebar(source_df: pd.DataFrame) -> tuple[str, list[str], list[str], 
             st.session_state.analysis_mode = "최종 산정"
             st.session_state.selected_regions = all_regions
             st.session_state.selected_levels = available_levels(source_df)
-            st.session_state.top_n = 10
+            st.session_state.main_chart_top_n = 10
+            st.session_state.main_priority_top_n = 10
             st.rerun()
 
         st.markdown("#### 기간")
         mode = st.radio("분석 기준", all_modes, key="analysis_mode", help="현재 파일에 저장된 최신 기준 결과를 선택합니다.")
 
-    return mode, all_regions, [], 10, ""
+    return mode
 
 
-def render_filters_for_mode(source_df: pd.DataFrame, latest_basis: str) -> tuple[list[str], list[str], int, str]:
+def render_filters_for_mode(source_df: pd.DataFrame, latest_basis: str) -> tuple[list[str], list[str]]:
     all_regions = sorted(source_df["sigungu"].dropna().astype(str).unique().tolist()) if not source_df.empty else []
     levels = available_levels(source_df)
     if "selected_regions" not in st.session_state:
@@ -992,15 +1003,11 @@ def render_filters_for_mode(source_df: pd.DataFrame, latest_basis: str) -> tuple
         st.caption(f"최신 기준: {latest_basis}")
         st.markdown("#### 지역/대상")
         selected_regions = st.multiselect("시·군", all_regions, key="selected_regions")
-        focus_options = selected_regions or all_regions
-        focus_target = st.selectbox("상세 확인 대상", focus_options, index=0 if focus_options else None)
 
         st.markdown("#### 모델/위험등급")
         selected_levels = st.multiselect("위험등급", levels, key="selected_levels")
-        max_top = max(5, min(15, len(source_df))) if not source_df.empty else 5
-        top_n = st.slider("점검 우선순위 표시 수", 5, max_top, min(st.session_state.get("top_n", 10), max_top), key="top_n")
 
-    return selected_regions, selected_levels, top_n, focus_target
+    return selected_regions, selected_levels
 
 
 def main() -> None:
@@ -1064,9 +1071,9 @@ def main() -> None:
     if ai_comparison_fallback:
         st.warning(f"전년도 동일 월 데이터가 없어 가장 가까운 학습 데이터 월({ai_comparison_month})을 AI 비교 기준월로 사용합니다.")
 
-    mode, _all_regions, _levels, _top_n, _focus = render_sidebar(features)
+    mode = render_sidebar(features)
     source_df = make_source_view(mode, features, live_summary, ai_summary)
-    selected_regions, selected_levels, top_n, focus_target = render_filters_for_mode(source_df, latest_basis)
+    selected_regions, selected_levels = render_filters_for_mode(source_df, latest_basis)
 
     filtered = source_df.copy()
     if selected_regions:
@@ -1082,7 +1089,7 @@ def main() -> None:
         f"""
         <div class="ag-filter">
         현재 필터: <b>{mode}</b> · 지역 <b>{len(selected_regions) if selected_regions else 0}개</b> ·
-        위험등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b> · 상세 대상 <b>{focus_target or "N/A"}</b>
+        위험등급 <b>{", ".join(selected_levels) if selected_levels else "전체"}</b>
         </div>
         """,
         unsafe_allow_html=True,
@@ -1114,26 +1121,40 @@ def main() -> None:
         render_empty_state()
         st.stop()
 
-    focus_candidates = selected_candidates(candidates, focus_target)
-
     map_tab, analysis_tab, priority_tab, raw_tab = st.tabs(
         ["지도 보기", "위험도 분석", "점검·대체수원", "원본·기타"]
     )
 
     with map_tab:
         render_section_header("지도 보기", "시·군별 위험점수를 지도에서 먼저 확인합니다.")
-        map_fig = make_map_chart(filtered)
+        map_style_label = st.selectbox(
+            "지도 유형",
+            ["밝은 지도", "기본 지도"],
+            index=0,
+            help="밝은 지도는 흰색 배경의 Carto Positron 스타일로 발표 화면에서 더 선명하게 보입니다.",
+        )
+        map_style = {"밝은 지도": "carto-positron", "기본 지도": "open-street-map"}[map_style_label]
+        map_fig = make_map_chart(filtered, map_style)
         if map_fig:
             st.plotly_chart(map_fig, use_container_width=True)
-            st.caption("마커 크기는 위험점수, 색상은 위험등급을 의미합니다.")
+            st.caption("마커 크기는 위험점수, 색상은 위험등급을 의미합니다. 밝은 지도는 발표·리뷰 화면에서 행정구역과 마커를 더 또렷하게 확인할 때 사용합니다.")
         else:
             render_empty_state("지도에 표시할 좌표 또는 위험도 데이터가 없습니다.")
 
     with analysis_tab:
+        chart_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
+        chart_top_n = st.slider(
+            "위험도 차트 표시 수",
+            5,
+            chart_max_top,
+            min(st.session_state.get("main_chart_top_n", 10), chart_max_top),
+            key="main_chart_top_n",
+            help="위험도 분석 탭의 순위 차트에만 적용됩니다.",
+        )
         render_section_header("위험도 분석 그래프", "위험도 순위와 분포를 나누어 확인합니다.")
         left, right = st.columns([1.25, 1])
         with left:
-            ranking_fig = make_ranking_chart(filtered, f"{mode}: 어느 시·군을 먼저 볼 것인가?", top_n)
+            ranking_fig = make_ranking_chart(filtered, f"{mode}: 어느 시·군을 먼저 볼 것인가?", chart_top_n)
             if ranking_fig:
                 st.plotly_chart(ranking_fig, use_container_width=True)
                 st.caption("위험점수가 높고 순위가 빠를수록 점검 우선순위가 높습니다.")
@@ -1153,19 +1174,28 @@ def main() -> None:
             driver_fig = make_driver_chart(features)
             if driver_fig:
                 st.plotly_chart(driver_fig, use_container_width=True)
-                st.caption("최종 산정 결과에서 주요 위험 원인별 평균 위험점수를 비교합니다.")
+                st.caption("도넛 조각은 주요 위험 원인별 평균 위험점수의 상대적 비중을 보여줍니다.")
             else:
                 st.info("main_risk_driver 또는 final_water_risk_score 컬럼이 없어 위험 원인 차트를 건너뛰었습니다.")
         with right:
-            render_section_header(f"{focus_target} 위험 구성요소 그래프")
-            component_fig = make_component_chart(features, focus_target)
+            component_options = filtered["sigungu"].dropna().astype(str).drop_duplicates().tolist() if "sigungu" in filtered.columns else []
+            if st.session_state.get("main_component_focus") not in component_options and component_options:
+                st.session_state.main_component_focus = component_options[0]
+            component_focus = st.selectbox(
+                "위험 구성요소 확인 대상",
+                component_options,
+                key="main_component_focus",
+                help="이 선택은 위험 구성요소 그래프에만 적용됩니다.",
+            ) if component_options else None
+            render_section_header(f"{component_focus or 'N/A'} 위험 구성요소 그래프")
+            component_fig = make_component_chart(features, component_focus) if component_focus else None
             if component_fig:
                 st.plotly_chart(component_fig, use_container_width=True)
                 st.caption("원점수와 가중 기여점수를 함께 보면 해당 시·군의 위험 원인을 빠르게 설명할 수 있습니다.")
             else:
                 st.info("구성요소 점수 컬럼이 없어 상세 구성 차트를 건너뛰었습니다.")
 
-        focus_row = filtered[filtered["sigungu"] == focus_target]
+        focus_row = filtered[filtered["sigungu"] == component_focus] if component_focus else pd.DataFrame()
         if not focus_row.empty and has_missing_reservoir_context(focus_row):
             render_missing_reservoir_note(focus_row)
             row = focus_row.iloc[0]
@@ -1179,11 +1209,20 @@ def main() -> None:
             )
 
     with priority_tab:
+        priority_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
+        priority_top_n = st.slider(
+            "점검 우선순위 표시 수",
+            5,
+            priority_max_top,
+            min(st.session_state.get("main_priority_top_n", 10), priority_max_top),
+            key="main_priority_top_n",
+            help="점검·대체수원 탭의 우선순위 표에만 적용됩니다.",
+        )
         render_section_header(
             "우선 점검 순위",
             "현재 필터 기준으로 가장 먼저 확인할 시·군과 권고 조치를 정리했습니다.",
         )
-        priority_table = build_priority_table(filtered, features, top_n)
+        priority_table = build_priority_table(filtered, features, priority_top_n)
         if priority_table.empty:
             render_empty_state()
         else:
@@ -1191,16 +1230,26 @@ def main() -> None:
 
         render_section_header(
             "대체 수원 후보",
-            f"{focus_target} 기준으로 이미 생성된 후보 결과를 보여줍니다.",
+            "선택한 시·군 기준으로 이미 생성된 후보 결과를 보여줍니다.",
         )
+        candidate_options = filtered["sigungu"].dropna().astype(str).drop_duplicates().tolist() if "sigungu" in filtered.columns else []
+        if st.session_state.get("main_candidate_focus") not in candidate_options and candidate_options:
+            st.session_state.main_candidate_focus = candidate_options[0]
+        candidate_focus = st.selectbox(
+            "대체 수원 확인 대상",
+            candidate_options,
+            key="main_candidate_focus",
+            help="이 선택은 대체 수원 후보 표에만 적용됩니다.",
+        ) if candidate_options else None
+        focus_candidates = selected_candidates(candidates, candidate_focus) if candidate_focus else pd.DataFrame()
         if focus_candidates.empty:
             st.info("조건에 맞는 대체 수원 후보 데이터가 없습니다.")
         else:
             st.dataframe(format_display_dataframe(candidate_display(focus_candidates)), use_container_width=True, hide_index=True)
             st.download_button(
-                label=f"{focus_target} 대체 수원 후보 CSV 다운로드",
+                label=f"{candidate_focus} 대체 수원 후보 CSV 다운로드",
                 data=focus_candidates.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"{focus_target}_alternative_source_top5.csv",
+                file_name=f"{candidate_focus}_alternative_source_top5.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
