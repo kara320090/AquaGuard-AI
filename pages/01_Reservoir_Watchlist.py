@@ -609,112 +609,121 @@ def main() -> None:
     severe_count = int(filtered["watch_level"].astype(str).str.contains("심각|경계|주의", regex=True).sum()) if "watch_level" in filtered.columns and not filtered.empty else 0
     facility_count = len(facility)
 
-    render_kpi_cards(
-        [
-            ("Watch 대상 시·군", f"{len(filtered):,}곳", "현재 필터 기준 Watchlist 대상 수입니다."),
-            ("주의 이상 대상", f"{severe_count:,}곳", "주의·경계·심각후보 등급 대상 수입니다."),
-            ("전체 저수지 시설", f"{facility_count:,}개", "대시보드에 연결된 저수지 시설 수입니다."),
-            ("최우선 시·군", str(top_watch["sigungu"]) if top_watch is not None else "N/A", "현재 필터 기준 Watch 1순위입니다."),
-            ("저수지 기준일", latest_date(filtered, ["reservoir_latest_date"]), "Watchlist 산정에 사용된 최신 기준일입니다."),
-        ]
-    )
-
     if filtered.empty:
         render_empty_state()
         st.stop()
 
-    render_section_header("점검 우선순위", "저수율 위험점수가 높고 Watch 순위가 빠른 시·군을 먼저 확인합니다.")
-    st.dataframe(format_display_dataframe(make_watch_priority_table(filtered, top_n)), use_container_width=True, hide_index=True)
-
-    render_section_header("저수율 위험도 해석", "평균과 최저 저수율을 함께 보며 지역 단위 위험을 확인합니다.")
-    left, right = st.columns(2)
-    with left:
-        watch_fig = make_watch_bar(filtered, top_n)
-        if watch_fig:
-            st.plotly_chart(watch_fig, use_container_width=True)
-            st.caption("막대가 길수록 저수율 관점에서 우선 확인할 필요가 큽니다.")
-        else:
-            st.info("reservoir_risk_score 컬럼이 없어 위험도 차트를 건너뛰었습니다.")
-    with right:
-        rate_fig = make_rate_compare_chart(filtered, top_n)
-        if rate_fig:
-            st.plotly_chart(rate_fig, use_container_width=True)
-            st.caption("최저 저수율이 평균보다 크게 낮으면 특정 시설 중심의 현장 확인이 필요합니다.")
-        else:
-            st.info("평균·최저 저수율 컬럼이 없어 비교 차트를 건너뛰었습니다.")
-
     selected_facility, removed_duplicates = prepare_facility(facility, focus)
     facility_for_table = attach_latest_oldam_to_facilities(selected_facility, oldam_today, focus)
-    render_section_header(f"{focus} 시설별 점검 우선순위", "선택한 시·군 안에서 먼저 확인할 저수지 시설입니다.")
-    render_selected_region_summary(watch, focus)
-    st.caption(
-        "아래 시설 표의 우선순위는 시·군 위험도와 시설 규모 정보를 결합한 점검 우선순위입니다. "
-        "시·군 평균/최저 저수율은 지역 공통 지표이므로 시설별 행에 반복 표시하지 않습니다."
+
+    summary_tab, risk_tab, facility_tab, raw_tab = st.tabs(
+        ["Watchlist 요약", "저수율 분석", "시설별 점검", "원본·기타"]
     )
-    st.info("시설 점검 우선점수는 시설별 실시간 저수율이 아니라, 시·군 저수율 위험도와 시설 규모 정보를 결합한 행정 점검 우선순위입니다.")
-    if "facility_latest_reservoir_rate" in facility_for_table.columns and facility_for_table["facility_latest_reservoir_rate"].isna().all():
-        st.info("시설별 최신 저수율은 원천 데이터에서 직접 제공되지 않아, 시·군 단위 저수율과 시설 규모를 결합해 우선순위를 산정했습니다.")
 
-    facility_top = make_facility_priority_table(facility_for_table, top_n)
-    if facility_top.empty:
-        render_empty_state("선택한 시·군의 저수지 시설 정보가 없습니다.")
-    else:
-        st.caption(f"표시 시설 {len(facility_for_table):,}개" + (f" · 중복 제거 {removed_duplicates:,}개" if removed_duplicates else ""))
-        st.dataframe(format_display_dataframe(facility_top), use_container_width=True, hide_index=True)
-
-    if not oldam_today.empty and "sigungu" in oldam_today.columns:
-        render_section_header("올담 최신 공개 저수지 현황", "최신 공개 snapshot에 포함된 시설만 표시합니다.")
-        selected_oldam = oldam_today[oldam_today["sigungu"] == focus].copy()
-        if selected_oldam.empty:
-            st.info("선택한 시·군은 올담 최신 snapshot에 직접 포함되지 않았습니다.")
-        else:
-            oldam_cols = [c for c in ["facility_name", "reservoir_rate", "date", "location_raw", "facility_match_status"] if c in selected_oldam.columns]
-            oldam_view = selected_oldam[oldam_cols].rename(
-                columns={
-                    "facility_name": "저수지명",
-                    "reservoir_rate": "최신 공개 저수율",
-                    "date": "기준일",
-                    "location_raw": "위치",
-                    "facility_match_status": "매칭 상태",
-                }
-            )
-            sort_col = "최신 공개 저수율" if "최신 공개 저수율" in oldam_view.columns else oldam_view.columns[0]
-            oldam_sorted = oldam_view.sort_values(sort_col)
-            render_missing_reservoir_note(oldam_sorted)
-            st.dataframe(format_display_dataframe(oldam_sorted), use_container_width=True, hide_index=True)
-    else:
-        st.info(f"선택 데이터 파일이 없습니다: {OLDAM_TODAY_PATH}")
-
-    render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 원본 Watchlist와 시설 목록을 확인합니다.")
-    with st.expander("Watchlist 전체 보기", expanded=True):
-        watch_display = filtered.sort_values("watch_rank")
-        render_missing_reservoir_note(watch_display)
-        st.dataframe(format_display_dataframe(watch_display), use_container_width=True, hide_index=True)
-        st.download_button(
-            label="Watchlist CSV 다운로드",
-            data=filtered.to_csv(index=False).encode("utf-8-sig"),
-            file_name="reservoir_watchlist_filtered.csv",
-            mime="text/csv",
-            use_container_width=True,
+    with summary_tab:
+        render_kpi_cards(
+            [
+                ("Watch 대상 시·군", f"{len(filtered):,}곳", "현재 필터 기준 Watchlist 대상 수입니다."),
+                ("주의 이상 대상", f"{severe_count:,}곳", "주의·경계·심각후보 등급 대상 수입니다."),
+                ("전체 저수지 시설", f"{facility_count:,}개", "대시보드에 연결된 저수지 시설 수입니다."),
+                ("최우선 시·군", str(top_watch["sigungu"]) if top_watch is not None else "N/A", "현재 필터 기준 Watch 1순위입니다."),
+                ("저수지 기준일", latest_date(filtered, ["reservoir_latest_date"]), "Watchlist 산정에 사용된 최신 기준일입니다."),
+            ]
         )
-    with st.expander(f"{focus} 저수지 시설 전체 보기"):
-        if facility_for_table.empty:
-            render_empty_state("조건에 맞는 데이터가 없습니다")
+        render_section_header("점검 우선순위", "저수율 위험점수가 높고 Watch 순위가 빠른 시·군을 먼저 확인합니다.")
+        st.dataframe(format_display_dataframe(make_watch_priority_table(filtered, top_n)), use_container_width=True, hide_index=True)
+
+    with risk_tab:
+        render_section_header("저수율 위험도 해석", "평균과 최저 저수율을 함께 보며 지역 단위 위험을 확인합니다.")
+        left, right = st.columns(2)
+        with left:
+            watch_fig = make_watch_bar(filtered, top_n)
+            if watch_fig:
+                st.plotly_chart(watch_fig, use_container_width=True)
+                st.caption("막대가 길수록 저수율 관점에서 우선 확인할 필요가 큽니다.")
+            else:
+                st.info("reservoir_risk_score 컬럼이 없어 위험도 차트를 건너뛰었습니다.")
+        with right:
+            rate_fig = make_rate_compare_chart(filtered, top_n)
+            if rate_fig:
+                st.plotly_chart(rate_fig, use_container_width=True)
+                st.caption("최저 저수율이 평균보다 크게 낮으면 특정 시설 중심의 현장 확인이 필요합니다.")
+            else:
+                st.info("평균·최저 저수율 컬럼이 없어 비교 차트를 건너뛰었습니다.")
+
+    with facility_tab:
+        render_section_header(f"{focus} 시설별 점검 우선순위", "선택한 시·군 안에서 먼저 확인할 저수지 시설입니다.")
+        render_selected_region_summary(watch, focus)
+        st.caption(
+            "아래 시설 표의 우선순위는 시·군 위험도와 시설 규모 정보를 결합한 점검 우선순위입니다. "
+            "시·군 평균/최저 저수율은 지역 공통 지표이므로 시설별 행에 반복 표시하지 않습니다."
+        )
+        st.info("시설 점검 우선점수는 시설별 실시간 저수율이 아니라, 시·군 저수율 위험도와 시설 규모 정보를 결합한 행정 점검 우선순위입니다.")
+        if "facility_latest_reservoir_rate" in facility_for_table.columns and facility_for_table["facility_latest_reservoir_rate"].isna().all():
+            st.info("시설별 최신 저수율은 원천 데이터에서 직접 제공되지 않아, 시·군 단위 저수율과 시설 규모를 결합해 우선순위를 산정했습니다.")
+
+        facility_top = make_facility_priority_table(facility_for_table, top_n)
+        if facility_top.empty:
+            render_empty_state("선택한 시·군의 저수지 시설 정보가 없습니다.")
         else:
-            facility_detail = make_facility_priority_table(facility_for_table, len(facility_for_table))
-            st.dataframe(format_display_dataframe(facility_detail), use_container_width=True, hide_index=True)
+            st.caption(f"표시 시설 {len(facility_for_table):,}개" + (f" · 중복 제거 {removed_duplicates:,}개" if removed_duplicates else ""))
+            st.dataframe(format_display_dataframe(facility_top), use_container_width=True, hide_index=True)
+
+        if not oldam_today.empty and "sigungu" in oldam_today.columns:
+            render_section_header("올담 최신 공개 저수지 현황", "최신 공개 snapshot에 포함된 시설만 표시합니다.")
+            selected_oldam = oldam_today[oldam_today["sigungu"] == focus].copy()
+            if selected_oldam.empty:
+                st.info("선택한 시·군은 올담 최신 snapshot에 직접 포함되지 않았습니다.")
+            else:
+                oldam_cols = [c for c in ["facility_name", "reservoir_rate", "date", "location_raw", "facility_match_status"] if c in selected_oldam.columns]
+                oldam_view = selected_oldam[oldam_cols].rename(
+                    columns={
+                        "facility_name": "저수지명",
+                        "reservoir_rate": "최신 공개 저수율",
+                        "date": "기준일",
+                        "location_raw": "위치",
+                        "facility_match_status": "매칭 상태",
+                    }
+                )
+                sort_col = "최신 공개 저수율" if "최신 공개 저수율" in oldam_view.columns else oldam_view.columns[0]
+                oldam_sorted = oldam_view.sort_values(sort_col)
+                render_missing_reservoir_note(oldam_sorted)
+                st.dataframe(format_display_dataframe(oldam_sorted), use_container_width=True, hide_index=True)
+        else:
+            st.info(f"선택 데이터 파일이 없습니다: {OLDAM_TODAY_PATH}")
+
+    with raw_tab:
+        render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 원본 Watchlist와 시설 목록을 확인합니다.")
+        with st.expander("Watchlist 전체 보기", expanded=True):
+            watch_display = filtered.sort_values("watch_rank")
+            render_missing_reservoir_note(watch_display)
+            st.dataframe(format_display_dataframe(watch_display), use_container_width=True, hide_index=True)
             st.download_button(
-                label=f"{focus} 저수지 시설 CSV 다운로드",
-                data=facility_for_table.to_csv(index=False).encode("utf-8-sig"),
-                file_name=f"{focus}_reservoir_facility_status.csv",
+                label="Watchlist CSV 다운로드",
+                data=filtered.to_csv(index=False).encode("utf-8-sig"),
+                file_name="reservoir_watchlist_filtered.csv",
                 mime="text/csv",
                 use_container_width=True,
             )
+        with st.expander(f"{focus} 저수지 시설 전체 보기"):
+            if facility_for_table.empty:
+                render_empty_state("조건에 맞는 데이터가 없습니다")
+            else:
+                facility_detail = make_facility_priority_table(facility_for_table, len(facility_for_table))
+                st.dataframe(format_display_dataframe(facility_detail), use_container_width=True, hide_index=True)
+                st.download_button(
+                    label=f"{focus} 저수지 시설 CSV 다운로드",
+                    data=facility_for_table.to_csv(index=False).encode("utf-8-sig"),
+                    file_name=f"{focus}_reservoir_facility_status.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
 
-    st.info(
-        "저수지 개별 실시간 저수율은 공개 원천 데이터의 한계로 일부 시설만 최신 snapshot과 직접 연결됩니다. "
-        "시설 점검 우선순위는 시·군 단위 위험과 시설 제원 정보를 결합한 참고 지표입니다."
-    )
+        st.info(
+            "저수지 개별 실시간 저수율은 공개 원천 데이터의 한계로 일부 시설만 최신 snapshot과 직접 연결됩니다. "
+            "시설 점검 우선순위는 시·군 단위 위험과 시설 제원 정보를 결합한 참고 지표입니다."
+        )
+
     show_messages([oldam_msg])
 
 
