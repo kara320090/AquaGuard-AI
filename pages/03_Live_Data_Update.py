@@ -473,6 +473,86 @@ def status_summary_table(status_frames: list[tuple[str, pd.DataFrame]]) -> pd.Da
     return pd.DataFrame(rows)
 
 
+def detail_region_options(filtered: pd.DataFrame, summary: pd.DataFrame) -> list[str]:
+    source = filtered if not filtered.empty else summary
+    if source.empty or "sigungu" not in source.columns:
+        return []
+    sort_cols = [col for col in ["final_live_priority_rank", "final_live_water_risk_score"] if col in source.columns]
+    ascending = [col == "final_live_priority_rank" for col in sort_cols]
+    if sort_cols:
+        source = source.sort_values(sort_cols, ascending=ascending)
+    return source["sigungu"].dropna().astype(str).drop_duplicates().tolist()
+
+
+def render_live_region_detail(summary: pd.DataFrame, filtered: pd.DataFrame, default_focus: str | None) -> None:
+    options = detail_region_options(filtered, summary)
+    if not options:
+        render_empty_state()
+        return
+
+    default_index = options.index(default_focus) if default_focus in options else 0
+    if st.session_state.get("live_detail_region_select") not in options:
+        st.session_state.live_detail_region_select = options[default_index]
+    focus = st.selectbox(
+        "상세 해석 지역 선택",
+        options,
+        index=default_index,
+        key="live_detail_region_select",
+        help="지역 필터에 포함된 시·군 중 상세 해석을 확인할 대상을 선택합니다.",
+    )
+
+    focus_row = summary[summary["sigungu"].astype(str) == str(focus)] if "sigungu" in summary.columns else pd.DataFrame()
+    if focus_row.empty:
+        st.warning(f"{focus} 상세 해석에 사용할 Live 결과 행을 찾을 수 없습니다.")
+        return
+
+    row = focus_row.iloc[0]
+    st.caption(f"선택 지역: {focus} · 지역 필터에 포함된 {len(options):,}개 시·군 중 선택")
+    render_kpi_cards(
+        [
+            ("Live 위험점수", format_value(row.get("final_live_water_risk_score"), "점", 1), "최신 원천 데이터를 반영한 Live 위험점수입니다."),
+            ("기준 대비 변화", format_value(row.get("live_score_delta_from_baseline"), "점", 1), "최종 산정 기준 위험점수 대비 변화량입니다."),
+            ("Live 위험등급", format_display_value(row.get("final_live_water_risk_level"), "N/A"), "Live 위험점수 기준 등급입니다."),
+            ("주요 위험 원인", format_display_value(row.get("live_main_risk_driver"), "N/A"), "Live 위험점수 상승에 가장 크게 기여한 원인입니다."),
+        ]
+    )
+
+    st.success(
+        f"{focus}의 Live 위험점수는 {format_value(row.get('final_live_water_risk_score'), '점', 1)}이며 "
+        f"기준 산정 대비 {format_value(row.get('live_score_delta_from_baseline'), '점', 1)} 변했습니다. "
+        f"현재 주요 원인은 {format_display_value(row.get('live_main_risk_driver'), 'N/A')}입니다."
+    )
+
+    detail_cols = [
+        ("저수지 평균 저수율", "today_avg_reservoir_rate", "%"),
+        ("저수지 최저 저수율", "today_min_reservoir_rate", "%"),
+        ("저수지 반영 건수", "today_reservoir_count", "건"),
+        ("30일 강우량", "rainfall_30d", "mm"),
+        ("7일 강우량", "rainfall_7d", "mm"),
+        ("강우 부족도", "latest_rain_shortage_score", "점"),
+        ("토양수분 평균", "soil_moisture_avg", ""),
+        ("토양수분 위험도", "soil_moisture_drought_score", "점"),
+        ("기상 원천", "live_weather_source", ""),
+        ("저수지 원천", "live_reservoir_source", ""),
+        ("토양수분 원천", "live_soil_source", ""),
+        ("토양수분 기준일", "soil_data_date", ""),
+    ]
+    detail_table = pd.DataFrame(
+        [
+            {"항목": label, "값": format_value(row.get(col), suffix, 1) if suffix else format_display_value(row.get(col), "N/A")}
+            for label, col, suffix in detail_cols
+            if col in row.index
+        ]
+    )
+    if not detail_table.empty:
+        st.dataframe(detail_table, use_container_width=True, hide_index=True)
+
+    st.caption(
+        "상세 해석은 선택한 시·군의 Live 결과 한 행을 기준으로 표시합니다. "
+        "지역별 원천 데이터가 없는 항목은 N/A 또는 자료 없음으로 표시하며, 위험점수 계산값은 변경하지 않습니다."
+    )
+
+
 def main() -> None:
     inject_css()
 
@@ -560,112 +640,111 @@ def main() -> None:
         render_empty_state()
         st.stop()
 
-    render_section_header("점검 우선순위", "Live 업데이트 후 가장 먼저 확인할 시·군입니다.")
-    priority = build_priority_table(filtered, top_n)
-    if priority.empty:
-        render_empty_state()
-    else:
-        st.dataframe(format_display_dataframe(priority), use_container_width=True, hide_index=True)
-
-    render_section_header("데이터 수집 상태", "Live 위험도에 들어온 원천 데이터의 정상 수집 여부를 요약합니다.")
-    status_table = status_summary_table(
-        [
-            ("Live Feature", status),
-            ("올담 저수지", oldam_status),
-            ("기상청 AWS/ASOS", kma_status),
-            ("ADMS 토양수분", soil_status),
-            ("ADMS 저수율 보조", adms_status),
-        ]
+    summary_tab, chart_tab, detail_tab, raw_tab = st.tabs(
+        ["요약·우선순위", "위험도 차트", "지역 상세해석", "원본·검증"]
     )
-    st.dataframe(format_display_dataframe(status_table), use_container_width=True, hide_index=True)
 
-    render_section_header("Live 위험도 분석", "현재 위험도와 기준 대비 변화량을 분리해서 확인합니다.")
-    left, right = st.columns(2)
-    with left:
-        ranking_fig = make_live_ranking_chart(filtered, top_n)
-        if ranking_fig:
-            st.plotly_chart(ranking_fig, use_container_width=True)
-            st.caption("막대가 길수록 오늘 기준 점검 우선순위가 높습니다.")
+    with summary_tab:
+        render_section_header("점검 우선순위", "Live 업데이트 후 가장 먼저 확인할 시·군입니다.")
+        priority = build_priority_table(filtered, top_n)
+        if priority.empty:
+            render_empty_state()
         else:
-            st.info("final_live_water_risk_score 컬럼이 없어 위험도 차트를 건너뛰었습니다.")
-    with right:
-        delta_fig = make_delta_chart(filtered, top_n)
-        if delta_fig:
-            st.plotly_chart(delta_fig, use_container_width=True)
-            st.caption("0보다 크면 기준 산정 대비 Live 위험도가 상승한 지역입니다.")
-        else:
-            st.info("live_score_delta_from_baseline 컬럼이 없어 변화량 차트를 건너뛰었습니다.")
+            st.dataframe(format_display_dataframe(priority), use_container_width=True, hide_index=True)
 
-    left, right = st.columns(2)
-    with left:
-        coverage_fig = make_source_coverage_chart(summary)
-        if coverage_fig:
-            st.plotly_chart(coverage_fig, use_container_width=True)
-            st.caption("데이터 구분별 최신 원천 반영 범위를 확인합니다.")
-        else:
-            st.info("Live 원천 데이터 컬럼이 없어 수집 범위 차트를 건너뛰었습니다.")
-    with right:
-        cross_fig = make_crosscheck_chart(cross)
-        if cross_fig:
-            st.plotly_chart(cross_fig, use_container_width=True)
-            st.caption("점선에 가까울수록 ADMS와 올담 저수율이 비슷합니다.")
-        else:
-            st.info(f"저수율 교차검증 차트를 만들 수 없습니다: {CROSSCHECK_PATH}")
-
-    render_section_header(f"{focus} 상세 해석", "선택한 지역의 Live 변화 원인을 짧게 확인합니다.")
-    focus_row = summary[summary["sigungu"] == focus]
-    if focus_row.empty:
-        render_empty_state()
-    else:
-        row = focus_row.iloc[0]
-        st.success(
-            f"{focus}의 Live 위험점수는 {format_value(row.get('final_live_water_risk_score'), '점', 1)}이며 "
-            f"기준 산정 대비 {format_value(row.get('live_score_delta_from_baseline'), '점', 1)} 변했습니다. "
-            f"주요 원인은 {row.get('live_main_risk_driver', 'N/A')}입니다."
-        )
-
-    render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 원본 Live 결과와 검증 자료를 확인합니다.")
-    with st.expander("Live 위험도 결과", expanded=True):
-        live_result_display = filtered.sort_values("final_live_priority_rank")
-        render_missing_reservoir_note(live_result_display)
-        st.dataframe(format_display_dataframe(live_result_display), use_container_width=True, hide_index=True)
-        st.download_button(
-            label="Live 위험도 결과 CSV 다운로드",
-            data=filtered.to_csv(index=False).encode("utf-8-sig"),
-            file_name="latest_live_risk_summary_filtered.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-    with st.expander("Live feature 원본"):
-        if live.empty:
-            st.info(f"선택 데이터 파일이 없습니다: {LIVE_FEATURE_PATH}")
-        else:
-            st.dataframe(format_display_dataframe(live), use_container_width=True, hide_index=True)
-    with st.expander("올담 vs ADMS 교차검증 원본"):
-        if cross.empty:
-            st.info(f"선택 데이터 파일이 없습니다: {CROSSCHECK_PATH}")
-        else:
-            show_cols = [
-                "sigungu",
-                "adms_rvow",
-                "adms_normal_rvow",
-                "adms_normal_ratio",
-                "oldam_avg_reservoir_rate",
-                "rvow_diff_oldam_minus_adms",
-                "crosscheck_status",
+        render_section_header("데이터 수집 상태", "Live 위험도에 들어온 원천 데이터의 정상 수집 여부를 요약합니다.")
+        status_table = status_summary_table(
+            [
+                ("Live Feature", status),
+                ("올담 저수지", oldam_status),
+                ("기상청 AWS/ASOS", kma_status),
+                ("ADMS 토양수분", soil_status),
+                ("ADMS 저수율 보조", adms_status),
             ]
-            show_cols = [c for c in show_cols if c in cross.columns]
-            st.dataframe(format_display_dataframe(cross[show_cols]), use_container_width=True, hide_index=True)
-    with st.expander("산식 및 해석 기준"):
-        if method:
-            st.markdown(method)
-        else:
-            st.info(f"선택 문서 파일이 없습니다: {METHOD_PATH}")
+        )
+        st.dataframe(format_display_dataframe(status_table), use_container_width=True, hide_index=True)
 
-    st.info(
-        "Live 결과는 최신 공개 snapshot을 반영한 참고자료입니다. 실시간 운영 판단에는 현장 저수율, 관로 상태, "
-        "수리권, 수질, 행정 협의 정보를 함께 확인해야 합니다."
-    )
+    with chart_tab:
+        render_section_header("Live 위험도 분석", "현재 위험도와 기준 대비 변화량을 분리해서 확인합니다.")
+        left, right = st.columns(2)
+        with left:
+            ranking_fig = make_live_ranking_chart(filtered, top_n)
+            if ranking_fig:
+                st.plotly_chart(ranking_fig, use_container_width=True)
+                st.caption("막대가 길수록 오늘 기준 점검 우선순위가 높습니다.")
+            else:
+                st.info("final_live_water_risk_score 컬럼이 없어 위험도 차트를 건너뛰었습니다.")
+        with right:
+            delta_fig = make_delta_chart(filtered, top_n)
+            if delta_fig:
+                st.plotly_chart(delta_fig, use_container_width=True)
+                st.caption("0보다 크면 기준 산정 대비 Live 위험도가 상승한 지역입니다.")
+            else:
+                st.info("live_score_delta_from_baseline 컬럼이 없어 변화량 차트를 건너뛰었습니다.")
+
+        left, right = st.columns(2)
+        with left:
+            coverage_fig = make_source_coverage_chart(summary)
+            if coverage_fig:
+                st.plotly_chart(coverage_fig, use_container_width=True)
+                st.caption("데이터 구분별 최신 원천 반영 범위를 확인합니다.")
+            else:
+                st.info("Live 원천 데이터 컬럼이 없어 수집 범위 차트를 건너뛰었습니다.")
+        with right:
+            cross_fig = make_crosscheck_chart(cross)
+            if cross_fig:
+                st.plotly_chart(cross_fig, use_container_width=True)
+                st.caption("점선에 가까울수록 ADMS와 올담 저수율이 비슷합니다.")
+            else:
+                st.info(f"저수율 교차검증 차트를 만들 수 없습니다: {CROSSCHECK_PATH}")
+
+    with detail_tab:
+        render_section_header("지역 상세 해석", "콤보박스에서 시·군을 선택해 Live 변화 원인을 확인합니다.")
+        render_live_region_detail(summary, filtered, focus)
+
+    with raw_tab:
+        render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 원본 Live 결과와 검증 자료를 확인합니다.")
+        with st.expander("Live 위험도 결과", expanded=True):
+            live_result_display = filtered.sort_values("final_live_priority_rank")
+            render_missing_reservoir_note(live_result_display)
+            st.dataframe(format_display_dataframe(live_result_display), use_container_width=True, hide_index=True)
+            st.download_button(
+                label="Live 위험도 결과 CSV 다운로드",
+                data=filtered.to_csv(index=False).encode("utf-8-sig"),
+                file_name="latest_live_risk_summary_filtered.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        with st.expander("Live feature 원본"):
+            if live.empty:
+                st.info(f"선택 데이터 파일이 없습니다: {LIVE_FEATURE_PATH}")
+            else:
+                st.dataframe(format_display_dataframe(live), use_container_width=True, hide_index=True)
+        with st.expander("올담 vs ADMS 교차검증 원본"):
+            if cross.empty:
+                st.info(f"선택 데이터 파일이 없습니다: {CROSSCHECK_PATH}")
+            else:
+                show_cols = [
+                    "sigungu",
+                    "adms_rvow",
+                    "adms_normal_rvow",
+                    "adms_normal_ratio",
+                    "oldam_avg_reservoir_rate",
+                    "rvow_diff_oldam_minus_adms",
+                    "crosscheck_status",
+                ]
+                show_cols = [c for c in show_cols if c in cross.columns]
+                st.dataframe(format_display_dataframe(cross[show_cols]), use_container_width=True, hide_index=True)
+        with st.expander("산식 및 해석 기준"):
+            if method:
+                st.markdown(method)
+            else:
+                st.info(f"선택 문서 파일이 없습니다: {METHOD_PATH}")
+
+        st.info(
+            "Live 결과는 최신 공개 snapshot을 반영한 참고자료입니다. 실시간 운영 판단에는 현장 저수율, 관로 상태, "
+            "수리권, 수질, 행정 협의 정보를 함께 확인해야 합니다."
+        )
 
     show_messages([live_msg, status_msg, oldam_msg, kma_msg, soil_msg, adms_msg, cross_msg, method_msg])
 
