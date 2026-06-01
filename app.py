@@ -762,14 +762,17 @@ def make_driver_chart(features: pd.DataFrame) -> go.Figure | None:
         color_discrete_sequence=["#2563eb", "#0f766e", "#f59e0b", "#7c3aed", "#dc2626", "#64748b"],
     )
     fig.update_traces(
-        texttemplate="%{label}<br>%{value:.1f}점",
+        texttemplate="%{value:.1f}점",
         textposition="inside",
+        insidetextorientation="horizontal",
+        textfont=dict(size=13, color="#ffffff"),
         hovertemplate="주요 위험 원인=%{label}<br>평균 위험점수=%{value:.2f}점<br>대상 수=%{customdata[0]}곳<extra></extra>",
     )
     fig.update_layout(
-        height=380,
+        height=390,
         margin=dict(l=20, r=20, t=70, b=30),
         legend_title_text="주요 위험 원인",
+        uniformtext=dict(minsize=12, mode="show"),
     )
     return fig
 
