@@ -126,6 +126,32 @@ def inject_css() -> None:
         }
         [data-testid="stMetricLabel"] { color: #475569; }
         div[data-testid="stCaptionContainer"] { color: #64748b; }
+        .ag-page-title {
+            margin: 0 0 0.35rem 0;
+            font-size: 2.35rem;
+            line-height: 1.18;
+            letter-spacing: 0;
+            font-weight: 750;
+        }
+        .ag-basis-card {
+            background: #f8fafc;
+            border: 1px solid #dbe4f0;
+            border-radius: 8px;
+            padding: 0.85rem 1rem;
+            margin-top: 0.3rem;
+        }
+        .ag-basis-label {
+            color: #475569;
+            font-size: 0.78rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+        }
+        .ag-basis-value {
+            color: #0f172a;
+            font-size: 0.95rem;
+            line-height: 1.45;
+            font-weight: 650;
+        }
         .ag-section {
             margin-top: 1.6rem;
             padding-top: 0.5rem;
@@ -145,9 +171,20 @@ def inject_css() -> None:
 
 
 def render_page_header(title: str, service_definition: str, latest_basis: str) -> None:
-    st.title(title)
-    st.caption(service_definition)
-    st.markdown(f"**최신 분석 기준:** {latest_basis}")
+    left, right = st.columns([3.4, 1.15])
+    with left:
+        st.markdown(f'<h1 class="ag-page-title">{title}</h1>', unsafe_allow_html=True)
+        st.caption(service_definition)
+    with right:
+        st.markdown(
+            f"""
+            <div class="ag-basis-card">
+                <div class="ag-basis-label">최신 분석 기준</div>
+                <div class="ag-basis-value">{latest_basis}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_section_header(title: str, description: str | None = None) -> None:
@@ -1024,13 +1061,6 @@ def main() -> None:
         f"Live {live_basis_month} · AI 비교 {ai_comparison_month} · 학습 데이터 최종 {training_final_month}",
     )
 
-    st.info(
-        "Live 데이터는 2026년 최신 공개 데이터를 사용하고, AI 해석은 학습 데이터 범위 내에서 계절성이 같은 전년도 동일 월을 기준으로 비교합니다."
-    )
-    if ai_output_month != "N/A" and ai_output_month != ai_comparison_month:
-        st.caption(
-            f"현재 Deep AI 출력 파일 기준월은 {ai_output_month}입니다. 계절 비교 기준월 {ai_comparison_month}은 학습 데이터의 월별 기록에서 선택합니다."
-        )
     if ai_comparison_fallback:
         st.warning(f"전년도 동일 월 데이터가 없어 가장 가까운 학습 데이터 월({ai_comparison_month})을 AI 비교 기준월로 사용합니다.")
 
