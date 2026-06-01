@@ -1324,15 +1324,26 @@ def main() -> None:
             "수리권, 수질, 행정 협의를 함께 확인해야 합니다."
         )
 
-        selected_row = filtered[filtered["sigungu"] == focus_target]
+        report_options = filtered["sigungu"].dropna().astype(str).drop_duplicates().tolist() if "sigungu" in filtered.columns else []
+        if st.session_state.get("main_report_focus") not in report_options and report_options:
+            st.session_state.main_report_focus = report_options[0]
+        report_focus = st.selectbox(
+            "리포트 다운로드 대상",
+            report_options,
+            key="main_report_focus",
+            help="이 선택은 HTML 의사결정 리포트 다운로드에만 적용됩니다.",
+        ) if report_options else None
+        selected_row = filtered[filtered["sigungu"] == report_focus] if report_focus else pd.DataFrame()
         if selected_row.empty:
             selected_row = filtered.sort_values(["priority_rank", "risk_score"], ascending=[True, False]).head(1)
+            report_focus = str(selected_row.iloc[0]["sigungu"]) if not selected_row.empty and "sigungu" in selected_row.columns else "AquaGuard"
         if not selected_row.empty:
-            report_html = build_html_report(selected_row.iloc[0], focus_candidates)
+            report_candidates = selected_candidates(candidates, report_focus)
+            report_html = build_html_report(selected_row.iloc[0], report_candidates)
             st.download_button(
-                label=f"{focus_target} HTML 의사결정 리포트 다운로드",
+                label=f"{report_focus} HTML 의사결정 리포트 다운로드",
                 data=report_html.encode("utf-8-sig"),
-                file_name=f"AquaGuard_AI_{focus_target}_decision_report.html",
+                file_name=f"AquaGuard_AI_{report_focus}_decision_report.html",
                 mime="text/html",
                 use_container_width=True,
             )
