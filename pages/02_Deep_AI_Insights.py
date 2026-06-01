@@ -731,9 +731,9 @@ def main() -> None:
         "GRU 7일 후 저수율 예측과 AutoEncoder 이상 패턴 탐지를 결합해 학습 기반 위험 신호와 계절 비교 기준을 확인합니다.",
         f"Live 기준일 {live_basis_date} · AI 비교 기준월 {selected_comparison_month} · 학습 데이터 최종월 {training_final_month}",
     )
-    st.info("Live 데이터는 2026년 최신 공개 데이터를 사용하고, AI 해석은 학습 데이터 범위 내에서 계절성이 같은 전년도 동일 월을 기준으로 비교합니다.")
-    if ai_output_month != "N/A":
-        st.caption(f"현재 Deep AI 모델 출력 파일 기준월은 {ai_output_month}입니다. 2026년 Live 데이터를 직접 예측한 값으로 표시하지 않습니다.")
+    st.info(
+        f"Live 기준일 {live_basis_date}의 최신 공개 데이터와 AI 비교 기준월 {selected_comparison_month}의 학습 데이터를 계절 기준으로 비교합니다."
+    )
     if comparison_fallback and selected_comparison_month == default_comparison_month:
         st.warning(f"전년도 동일 월 데이터가 없어 가장 가까운 학습 데이터 월({selected_comparison_month})을 AI 비교 기준월로 사용합니다.")
 
@@ -779,149 +779,154 @@ def main() -> None:
         render_empty_state()
         st.stop()
 
-    render_section_header("점검 우선순위", "AI 예측과 이상탐지 결과를 결합해 먼저 확인할 지역입니다.")
-    priority = build_priority_table(filtered, top_n)
-    if priority.empty:
-        render_empty_state()
-    else:
-        st.dataframe(format_display_dataframe(priority), use_container_width=True, hide_index=True)
+    basis_tab, insight_tab, raw_tab = st.tabs(["AI 계절·성능", "예측·이상탐지", "원본 결과"])
 
-    render_section_header(
-        "AI 계절 비교 기준",
-        "현재 Live 월과 같은 계절의 학습 데이터 월을 골라 AI 해석의 계절 기준을 분리해서 보여줍니다.",
-    )
-    historical_snapshot = build_historical_month_snapshot(training_history, selected_comparison_month)
-    historical_fig = make_historical_comparison_chart(historical_snapshot, top_n)
-    if historical_fig:
-        st.plotly_chart(historical_fig, use_container_width=True)
-        st.caption(
-            f"{selected_comparison_month} 학습 데이터의 월평균 저수율 위험도입니다. Deep AI 출력값을 재계산하지 않고 계절 비교 기준으로만 사용합니다."
+    with basis_tab:
+        render_section_header(
+            "AI 계절 비교 기준",
+            "현재 Live 월과 같은 계절의 학습 데이터 월을 골라 AI 해석의 계절 기준을 분리해서 보여줍니다.",
         )
-        with st.expander(f"{selected_comparison_month} 학습 데이터 월별 요약 보기"):
-            st.dataframe(format_display_dataframe(historical_snapshot), use_container_width=True, hide_index=True)
-    else:
-        st.warning(f"AI 비교 기준월에 맞는 학습 데이터가 없습니다: {selected_comparison_month}")
-
-    render_section_header("성능 검증 요약", "리포트와 학습 이력에 실제 존재하는 성능 지표만 표시합니다.")
-    if performance_cards:
-        render_kpi_cards(performance_cards[:5])
-        if len(performance_cards) > 5:
-            render_kpi_cards(performance_cards[5:])
-    else:
-        st.info("성능 검증 지표 컬럼 또는 리포트 항목이 없어 표시할 수 있는 지표가 없습니다.")
-
-    train_fig = make_training_chart(gru_history)
-    if train_fig:
-        st.plotly_chart(train_fig, use_container_width=True)
-        st.caption("검증 MAE가 낮을수록 7일 후 저수율 예측 오차가 작습니다.")
-    else:
-        st.info("epoch 또는 valid_mae 컬럼이 없어 GRU 학습 추이 차트를 건너뛰었습니다.")
-
-    render_section_header("예측·이상탐지 분석", "각 차트는 위험 순위, 예측 변화, 이상 패턴을 분리해서 보여줍니다.")
-    left, right = st.columns(2)
-    with left:
-        ranking_fig = make_ai_ranking_chart(filtered, top_n)
-        if ranking_fig:
-            st.plotly_chart(ranking_fig, use_container_width=True)
-            st.caption("Deep AI 위험도는 GRU 예측 위험도와 AutoEncoder 이상점수를 결합한 결과입니다.")
+        historical_snapshot = build_historical_month_snapshot(training_history, selected_comparison_month)
+        historical_fig = make_historical_comparison_chart(historical_snapshot, top_n)
+        if historical_fig:
+            st.plotly_chart(historical_fig, use_container_width=True)
+            st.caption(
+                f"{selected_comparison_month} 학습 데이터의 월평균 저수율 위험도입니다. Deep AI 출력값을 재계산하지 않고 계절 비교 기준으로만 사용합니다."
+            )
+            with st.expander(f"{selected_comparison_month} 학습 데이터 월별 요약 보기"):
+                st.dataframe(format_display_dataframe(historical_snapshot), use_container_width=True, hide_index=True)
         else:
-            st.info("deep_ai_risk_score 컬럼이 없어 순위 차트를 건너뛰었습니다.")
-    with right:
-        forecast_fig = make_forecast_scatter(filtered)
-        if forecast_fig:
-            st.plotly_chart(forecast_fig, use_container_width=True)
-            st.caption("점선보다 아래에 있으면 7일 후 예측 저수율이 현재보다 낮습니다.")
-        else:
-            st.info("현재/예측 저수율 컬럼이 없어 예측 산점도를 건너뛰었습니다.")
+            st.warning(f"AI 비교 기준월에 맞는 학습 데이터가 없습니다: {selected_comparison_month}")
 
-    anomaly_fig = make_anomaly_chart(filtered, top_n)
-    if anomaly_fig:
-        st.plotly_chart(anomaly_fig, use_container_width=True)
-        st.caption("이상점수가 높을수록 과거 정상 패턴과 다른 저수율 흐름입니다.")
-    else:
-        st.info("autoencoder_anomaly_score 컬럼이 없어 이상탐지 차트를 건너뛰었습니다.")
+        render_section_header("성능 검증 요약", "리포트와 학습 이력에 실제 존재하는 성능 지표만 표시합니다.")
+        if performance_cards:
+            render_kpi_cards(performance_cards[:5])
+            if len(performance_cards) > 5:
+                render_kpi_cards(performance_cards[5:])
+        else:
+            st.info("성능 검증 지표 컬럼 또는 리포트 항목이 없어 표시할 수 있는 지표가 없습니다.")
 
-    render_section_header(f"{focus} 상세 해석", "선택한 지역의 예측값과 이상탐지 결과를 같은 행 기준으로 설명합니다.")
-    focus_row = filtered[filtered["sigungu"] == focus]
-    if focus_row.empty:
-        st.warning(f"선택한 지역이 현재 필터 결과에 없습니다: {focus}")
-    else:
-        row = focus_row.iloc[0]
-        render_missing_reservoir_note(focus_row)
-        ae_cols = get_autoencoder_score_columns(filtered)
-        ae_raw = safe_get(row, [ae_cols["raw"]] if ae_cols["raw"] else [], default=np.nan)
-        ae_score = safe_get(row, [ae_cols["score"]] if ae_cols["score"] else [], default=np.nan)
-        ae_level = safe_get(row, [ae_cols["level"]] if ae_cols["level"] else [], default="N/A")
-        ae_cards = []
-        if ae_cols["raw"]:
-            ae_cards.append(("Reconstruction Loss", format_score(ae_raw, 4), "원본 AutoEncoder 재구성 오차입니다."))
+        train_fig = make_training_chart(gru_history)
+        if train_fig:
+            st.plotly_chart(train_fig, use_container_width=True)
+            st.caption("검증 MAE가 낮을수록 7일 후 저수율 예측 오차가 작습니다.")
         else:
-            st.info("reconstruction_error 컬럼이 없어 Reconstruction Loss 표시는 건너뛰었습니다.")
-        if ae_cols["score"]:
-            ae_cards.append(("Anomaly Score", format_score(ae_score, 2), "대시보드에서 쓰는 정규화 이상점수입니다."))
+            st.info("epoch 또는 valid_mae 컬럼이 없어 GRU 학습 추이 차트를 건너뛰었습니다.")
+
+    with insight_tab:
+        render_section_header("점검 우선순위", "AI 예측과 이상탐지 결과를 결합해 먼저 확인할 지역입니다.")
+        priority = build_priority_table(filtered, top_n)
+        if priority.empty:
+            render_empty_state()
         else:
-            st.info("autoencoder_anomaly_score 컬럼이 없어 Anomaly Score 표시는 건너뛰었습니다.")
-        if ae_cols["level"]:
-            ae_cards.append(("Anomaly Level", str(ae_level), "선택한 행의 AutoEncoder 이상탐지 등급입니다."))
+            st.dataframe(format_display_dataframe(priority), use_container_width=True, hide_index=True)
+
+        render_section_header("예측·이상탐지 분석", "각 차트는 위험 순위, 예측 변화, 이상 패턴을 분리해서 보여줍니다.")
+        left, right = st.columns(2)
+        with left:
+            ranking_fig = make_ai_ranking_chart(filtered, top_n)
+            if ranking_fig:
+                st.plotly_chart(ranking_fig, use_container_width=True)
+                st.caption("Deep AI 위험도는 GRU 예측 위험도와 AutoEncoder 이상점수를 결합한 결과입니다.")
+            else:
+                st.info("deep_ai_risk_score 컬럼이 없어 순위 차트를 건너뛰었습니다.")
+        with right:
+            forecast_fig = make_forecast_scatter(filtered)
+            if forecast_fig:
+                st.plotly_chart(forecast_fig, use_container_width=True)
+                st.caption("점선보다 아래에 있으면 7일 후 예측 저수율이 현재보다 낮습니다.")
+            else:
+                st.info("현재/예측 저수율 컬럼이 없어 예측 산점도를 건너뛰었습니다.")
+
+        anomaly_fig = make_anomaly_chart(filtered, top_n)
+        if anomaly_fig:
+            st.plotly_chart(anomaly_fig, use_container_width=True)
+            st.caption("이상점수가 높을수록 과거 정상 패턴과 다른 저수율 흐름입니다.")
         else:
-            st.info("autoencoder_anomaly_level 컬럼이 없어 Anomaly Level 표시는 건너뛰었습니다.")
-        if ae_cards:
-            render_kpi_cards(ae_cards)
-            st.caption("AutoEncoder 점수는 학습 데이터 패턴 대비 재구성 오차 기반 이상 신호이며, 수치가 높을수록 평소 패턴과 다름을 의미합니다.")
-        st.success(
-            f"{focus}의 Deep AI 위험도는 {format_value(row.get('deep_ai_risk_score'), '점', 1)}이며 "
-            f"등급은 {row.get('deep_ai_risk_level', 'N/A')}입니다. "
-            f"현재 평균 저수율 {format_value(row.get('current_avg_reservoir_rate'), '%', 1)}에서 "
-            f"7일 후 {format_value(row.get('pred_avg_reservoir_rate_7d'), '%', 1)}로 예측되었습니다. "
-            f"AutoEncoder Anomaly Score는 {format_score(ae_score, 2)}, Anomaly Level은 {ae_level}입니다."
+            st.info("autoencoder_anomaly_score 컬럼이 없어 이상탐지 차트를 건너뛰었습니다.")
+
+        render_section_header(f"{focus} 상세 해석", "선택한 지역의 예측값과 이상탐지 결과를 같은 행 기준으로 설명합니다.")
+        focus_row = filtered[filtered["sigungu"] == focus]
+        if focus_row.empty:
+            st.warning(f"선택한 지역이 현재 필터 결과에 없습니다: {focus}")
+        else:
+            row = focus_row.iloc[0]
+            render_missing_reservoir_note(focus_row)
+            ae_cols = get_autoencoder_score_columns(filtered)
+            ae_raw = safe_get(row, [ae_cols["raw"]] if ae_cols["raw"] else [], default=np.nan)
+            ae_score = safe_get(row, [ae_cols["score"]] if ae_cols["score"] else [], default=np.nan)
+            ae_level = safe_get(row, [ae_cols["level"]] if ae_cols["level"] else [], default="N/A")
+            ae_cards = []
+            if ae_cols["raw"]:
+                ae_cards.append(("Reconstruction Loss", format_score(ae_raw, 4), "원본 AutoEncoder 재구성 오차입니다."))
+            else:
+                st.info("reconstruction_error 컬럼이 없어 Reconstruction Loss 표시는 건너뛰었습니다.")
+            if ae_cols["score"]:
+                ae_cards.append(("Anomaly Score", format_score(ae_score, 2), "대시보드에서 쓰는 정규화 이상점수입니다."))
+            else:
+                st.info("autoencoder_anomaly_score 컬럼이 없어 Anomaly Score 표시는 건너뛰었습니다.")
+            if ae_cols["level"]:
+                ae_cards.append(("Anomaly Level", str(ae_level), "선택한 행의 AutoEncoder 이상탐지 등급입니다."))
+            else:
+                st.info("autoencoder_anomaly_level 컬럼이 없어 Anomaly Level 표시는 건너뛰었습니다.")
+            if ae_cards:
+                render_kpi_cards(ae_cards)
+                st.caption("AutoEncoder 점수는 학습 데이터 패턴 대비 재구성 오차 기반 이상 신호이며, 수치가 높을수록 평소 패턴과 다름을 의미합니다.")
+            st.success(
+                f"{focus}의 Deep AI 위험도는 {format_value(row.get('deep_ai_risk_score'), '점', 1)}이며 "
+                f"등급은 {row.get('deep_ai_risk_level', 'N/A')}입니다. "
+                f"현재 평균 저수율 {format_value(row.get('current_avg_reservoir_rate'), '%', 1)}에서 "
+                f"7일 후 {format_value(row.get('pred_avg_reservoir_rate_7d'), '%', 1)}로 예측되었습니다. "
+                f"AutoEncoder Anomaly Score는 {format_score(ae_score, 2)}, Anomaly Level은 {ae_level}입니다."
+            )
+
+    with raw_tab:
+        render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 예측·이상탐지 원본 결과를 확인합니다.")
+        with st.expander("Deep AI 시·군 요약", expanded=True):
+            sorted_filtered = filtered.sort_values("deep_ai_rank")
+            render_missing_reservoir_note(sorted_filtered)
+            st.dataframe(format_display_dataframe(sorted_filtered), use_container_width=True, hide_index=True)
+        with st.expander("GRU 7일 후 저수율 예측 결과"):
+            if forecast.empty:
+                st.info(f"선택 데이터 파일이 없습니다: {FORECAST_PATH}")
+            else:
+                st.dataframe(format_display_dataframe(forecast), use_container_width=True, hide_index=True)
+                st.download_button(
+                    label="GRU 예측 결과 CSV 다운로드",
+                    data=forecast.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="ai_gru_reservoir_forecast_by_sigungu.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+        with st.expander("AutoEncoder 이상탐지 결과"):
+            if anomaly.empty:
+                st.info(f"선택 데이터 파일이 없습니다: {ANOMALY_PATH}")
+            else:
+                st.dataframe(format_display_dataframe(anomaly), use_container_width=True, hide_index=True)
+                st.download_button(
+                    label="AutoEncoder 이상탐지 결과 CSV 다운로드",
+                    data=anomaly.to_csv(index=False).encode("utf-8-sig"),
+                    file_name="ai_autoencoder_anomaly_by_sigungu.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+        with st.expander("AI 모델 리포트 및 학습 이력"):
+            if report:
+                st.markdown(report)
+            else:
+                st.info(f"선택 문서 파일이 없습니다: {REPORT_PATH}")
+            if not gru_history.empty:
+                st.markdown("#### GRU 학습 이력")
+                st.dataframe(format_display_dataframe(gru_history), use_container_width=True, hide_index=True)
+            if not ae_history.empty:
+                st.markdown("#### AutoEncoder 학습 이력")
+                st.dataframe(format_display_dataframe(ae_history), use_container_width=True, hide_index=True)
+
+        st.info(
+            "Deep AI 결과는 공개데이터 기반 예측·이상탐지 참고자료입니다. 실제 농업용수 대응 여부는 현장 저수율, "
+            "관로, 수리권, 수질, 행정 협의를 함께 검토해야 합니다."
         )
-
-    render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 예측·이상탐지 원본 결과를 확인합니다.")
-    with st.expander("Deep AI 시·군 요약", expanded=True):
-        sorted_filtered = filtered.sort_values("deep_ai_rank")
-        render_missing_reservoir_note(sorted_filtered)
-        st.dataframe(format_display_dataframe(sorted_filtered), use_container_width=True, hide_index=True)
-    with st.expander("GRU 7일 후 저수율 예측 결과"):
-        if forecast.empty:
-            st.info(f"선택 데이터 파일이 없습니다: {FORECAST_PATH}")
-        else:
-            st.dataframe(format_display_dataframe(forecast), use_container_width=True, hide_index=True)
-            st.download_button(
-                label="GRU 예측 결과 CSV 다운로드",
-                data=forecast.to_csv(index=False).encode("utf-8-sig"),
-                file_name="ai_gru_reservoir_forecast_by_sigungu.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-    with st.expander("AutoEncoder 이상탐지 결과"):
-        if anomaly.empty:
-            st.info(f"선택 데이터 파일이 없습니다: {ANOMALY_PATH}")
-        else:
-            st.dataframe(format_display_dataframe(anomaly), use_container_width=True, hide_index=True)
-            st.download_button(
-                label="AutoEncoder 이상탐지 결과 CSV 다운로드",
-                data=anomaly.to_csv(index=False).encode("utf-8-sig"),
-                file_name="ai_autoencoder_anomaly_by_sigungu.csv",
-                mime="text/csv",
-                use_container_width=True,
-            )
-    with st.expander("AI 모델 리포트 및 학습 이력"):
-        if report:
-            st.markdown(report)
-        else:
-            st.info(f"선택 문서 파일이 없습니다: {REPORT_PATH}")
-        if not gru_history.empty:
-            st.markdown("#### GRU 학습 이력")
-            st.dataframe(format_display_dataframe(gru_history), use_container_width=True, hide_index=True)
-        if not ae_history.empty:
-            st.markdown("#### AutoEncoder 학습 이력")
-            st.dataframe(format_display_dataframe(ae_history), use_container_width=True, hide_index=True)
-
-    st.info(
-        "Deep AI 결과는 공개데이터 기반 예측·이상탐지 참고자료입니다. 실제 농업용수 대응 여부는 현장 저수율, "
-        "관로, 수리권, 수질, 행정 협의를 함께 검토해야 합니다."
-    )
-    show_messages([forecast_msg, anomaly_msg, live_msg, training_msg, gru_msg, ae_msg, report_msg])
+        show_messages([forecast_msg, anomaly_msg, live_msg, training_msg, gru_msg, ae_msg, report_msg])
 
 
 if __name__ == "__main__":

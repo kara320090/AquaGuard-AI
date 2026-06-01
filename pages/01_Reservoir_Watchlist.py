@@ -616,8 +616,8 @@ def main() -> None:
     selected_facility, removed_duplicates = prepare_facility(facility, focus)
     facility_for_table = attach_latest_oldam_to_facilities(selected_facility, oldam_today, focus)
 
-    summary_tab, risk_tab, facility_tab, raw_tab = st.tabs(
-        ["Watchlist 요약", "저수율 분석", "시설별 점검", "원본·기타"]
+    summary_tab, risk_tab, raw_tab = st.tabs(
+        ["Watchlist 요약", "저수율·시설 점검", "공개·원본 데이터"]
     )
 
     with summary_tab:
@@ -651,7 +651,6 @@ def main() -> None:
             else:
                 st.info("평균·최저 저수율 컬럼이 없어 비교 차트를 건너뛰었습니다.")
 
-    with facility_tab:
         render_section_header(f"{focus} 시설별 점검 우선순위", "선택한 시·군 안에서 먼저 확인할 저수지 시설입니다.")
         render_selected_region_summary(watch, focus)
         st.caption(
@@ -669,6 +668,7 @@ def main() -> None:
             st.caption(f"표시 시설 {len(facility_for_table):,}개" + (f" · 중복 제거 {removed_duplicates:,}개" if removed_duplicates else ""))
             st.dataframe(format_display_dataframe(facility_top), use_container_width=True, hide_index=True)
 
+    with raw_tab:
         if not oldam_today.empty and "sigungu" in oldam_today.columns:
             render_section_header("올담 최신 공개 저수지 현황", "최신 공개 snapshot에 포함된 시설만 표시합니다.")
             selected_oldam = oldam_today[oldam_today["sigungu"] == focus].copy()
@@ -692,7 +692,6 @@ def main() -> None:
         else:
             st.info(f"선택 데이터 파일이 없습니다: {OLDAM_TODAY_PATH}")
 
-    with raw_tab:
         render_section_header("상세 데이터 및 원본 결과 확인", "요약 이후 필요한 원본 Watchlist와 시설 목록을 확인합니다.")
         with st.expander("Watchlist 전체 보기", expanded=True):
             watch_display = filtered.sort_values("watch_rank")
