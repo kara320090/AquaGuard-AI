@@ -1114,170 +1114,179 @@ def main() -> None:
         render_empty_state()
         st.stop()
 
-    render_section_header(
-        "점검 우선순위",
-        "현재 필터 기준으로 가장 먼저 확인할 시·군과 권고 조치를 정리했습니다.",
-    )
-    priority_table = build_priority_table(filtered, features, top_n)
-    if priority_table.empty:
-        render_empty_state()
-    else:
-        st.dataframe(format_display_dataframe(priority_table), use_container_width=True, hide_index=True)
-
-    render_section_header(
-        "성능 검증 요약",
-        "모델 성능 파일에 실제 존재하는 지표만 보여줍니다. 없는 지표는 표시하지 않습니다.",
-    )
-    if performance_cards:
-        render_kpi_cards(performance_cards[:5])
-        if len(performance_cards) > 5:
-            render_kpi_cards(performance_cards[5:])
-    else:
-        st.info("성능 검증 지표 컬럼 또는 리포트 항목이 없어 표시할 수 있는 지표가 없습니다.")
-
-    render_section_header("위험도 분석", "각 차트는 하나의 질문에 답하도록 구성했습니다.")
-    left, right = st.columns([1.25, 1])
-    with left:
-        ranking_fig = make_ranking_chart(filtered, f"{mode}: 어느 시·군을 먼저 볼 것인가?", top_n)
-        if ranking_fig:
-            st.plotly_chart(ranking_fig, use_container_width=True)
-            st.caption("위험점수가 높고 순위가 빠를수록 점검 우선순위가 높습니다.")
-        else:
-            render_empty_state()
-    with right:
-        dist_fig = make_distribution_chart(filtered)
-        if dist_fig:
-            st.plotly_chart(dist_fig, use_container_width=True)
-            st.caption("위험등급별 점수 분포를 보면 특정 구간에 대상이 몰려 있는지 확인할 수 있습니다.")
-        else:
-            render_empty_state()
-
-    map_fig = make_map_chart(filtered)
-    if map_fig:
-        st.plotly_chart(map_fig, use_container_width=True)
-        st.caption("마커 크기는 위험점수, 색상은 위험등급을 의미합니다.")
-
-    left, right = st.columns(2)
-    with left:
-        driver_fig = make_driver_chart(features)
-        if driver_fig:
-            st.plotly_chart(driver_fig, use_container_width=True)
-            st.caption("최종 산정 결과에서 주요 위험 원인별 평균 위험점수를 비교합니다.")
-        else:
-            st.info("main_risk_driver 또는 final_water_risk_score 컬럼이 없어 위험 원인 차트를 건너뛰었습니다.")
-    with right:
-        component_fig = make_component_chart(features, focus_target)
-        if component_fig:
-            st.plotly_chart(component_fig, use_container_width=True)
-            st.caption("원점수와 가중 기여점수를 함께 보면 해당 시·군의 위험 원인을 빠르게 설명할 수 있습니다.")
-        else:
-            st.info("구성요소 점수 컬럼이 없어 상세 구성 차트를 건너뛰었습니다.")
-
-    focus_row = filtered[filtered["sigungu"] == focus_target]
-    if not focus_row.empty and has_missing_reservoir_context(focus_row):
-        render_missing_reservoir_note(focus_row)
-        row = focus_row.iloc[0]
-        st.caption(
-            " · ".join(
-                [
-                    f"기준일: {format_date_display(row.get('basis_date'), '저수지 기준일 없음')}",
-                    f"분석 기준: {build_analysis_basis(row)}",
-                ]
-            )
-        )
-
-    ai_fig = make_ai_scatter(ai_summary)
-    if ai_fig:
-        st.plotly_chart(ai_fig, use_container_width=True)
-        st.caption("점선보다 아래에 있는 대상은 7일 후 예측 저수율이 현재보다 낮은 경우입니다.")
-
-    render_section_header(
-        "대체 수원 후보",
-        f"{focus_target} 기준으로 이미 생성된 후보 결과를 보여줍니다.",
-    )
     focus_candidates = selected_candidates(candidates, focus_target)
-    if focus_candidates.empty:
-        st.info("조건에 맞는 대체 수원 후보 데이터가 없습니다.")
-    else:
-        st.dataframe(format_display_dataframe(candidate_display(focus_candidates)), use_container_width=True, hide_index=True)
-        st.download_button(
-            label=f"{focus_target} 대체 수원 후보 CSV 다운로드",
-            data=focus_candidates.to_csv(index=False).encode("utf-8-sig"),
-            file_name=f"{focus_target}_alternative_source_top5.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
 
-    render_section_header("상세 데이터 및 원본 결과 확인", "요약 판단 이후 필요한 원본 산정 결과를 확인합니다.")
-    detailed = filtered.rename(
-        columns={
-            "priority_rank": "우선순위",
-            "sigungu": "시·군",
-            "risk_score": "위험점수",
-            "risk_level": "위험등급",
-            "main_risk_driver": "주요 위험 원인",
-            "recommended_action": "권고 조치",
-            "basis_date": "기준일",
-            "analysis_mode": "분석 기준",
-        }
+    map_tab, analysis_tab, priority_tab, raw_tab = st.tabs(
+        ["지도 보기", "위험도 분석", "점검·대체수원", "원본·기타"]
     )
-    render_missing_reservoir_note(detailed)
-    st.dataframe(prepare_main_detail_display(detailed), use_container_width=True, hide_index=True)
 
-    with st.expander("원본 최종 산정 결과 보기"):
-        st.dataframe(format_display_dataframe(features), use_container_width=True, hide_index=True)
-        st.download_button(
-            label="최종 산정 결과 CSV 다운로드",
-            data=features.to_csv(index=False).encode("utf-8-sig"),
-            file_name="aquaguard_sigungu_features.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    with st.expander("성능 검증·학습 이력 원본 보기"):
-        if not gru_history.empty:
-            st.markdown("#### GRU 학습 이력")
-            st.dataframe(format_display_dataframe(gru_history), use_container_width=True, hide_index=True)
+    with map_tab:
+        render_section_header("지도 보기", "시·군별 위험점수를 지도에서 먼저 확인합니다.")
+        map_fig = make_map_chart(filtered)
+        if map_fig:
+            st.plotly_chart(map_fig, use_container_width=True)
+            st.caption("마커 크기는 위험점수, 색상은 위험등급을 의미합니다.")
         else:
-            st.info("GRU 학습 이력 파일이 없습니다.")
-        if not ae_history.empty:
-            st.markdown("#### AutoEncoder 학습 이력")
-            st.dataframe(format_display_dataframe(ae_history), use_container_width=True, hide_index=True)
-        else:
-            st.info("AutoEncoder 학습 이력 파일이 없습니다.")
-        if report_text:
-            st.markdown("#### AI 모델 리포트")
-            st.markdown(report_text)
-        if not validation.empty:
-            st.markdown("#### 최종 검증 체크 결과")
-            st.dataframe(format_display_dataframe(validation), use_container_width=True, hide_index=True)
+            render_empty_state("지도에 표시할 좌표 또는 위험도 데이터가 없습니다.")
 
-    with st.expander("보고서용 이미지 확인"):
-        for filename, caption in REPORT_FIGURES_LIST:
-            path = resolve_report_figure_path(filename)
-            if path.exists():
-                st.image(str(path), caption=caption, use_container_width=True)
+    with analysis_tab:
+        render_section_header("위험도 분석 그래프", "위험도 순위와 분포를 나누어 확인합니다.")
+        left, right = st.columns([1.25, 1])
+        with left:
+            ranking_fig = make_ranking_chart(filtered, f"{mode}: 어느 시·군을 먼저 볼 것인가?", top_n)
+            if ranking_fig:
+                st.plotly_chart(ranking_fig, use_container_width=True)
+                st.caption("위험점수가 높고 순위가 빠를수록 점검 우선순위가 높습니다.")
             else:
-                st.warning(f"이미지 파일이 없습니다: {path}")
+                render_empty_state()
+        with right:
+            dist_fig = make_distribution_chart(filtered)
+            if dist_fig:
+                st.plotly_chart(dist_fig, use_container_width=True)
+                st.caption("위험등급별 점수 분포를 보면 특정 구간에 대상이 몰려 있는지 확인할 수 있습니다.")
+            else:
+                render_empty_state()
 
-    render_section_header("설명 notes", "비기술 검토자가 볼 때 필요한 해석 기준만 짧게 남겼습니다.")
-    st.info(
-        "AquaGuard AI 결과는 공개데이터 기반 의사결정 참고자료입니다. 실제 대응은 현장 저수율, 관로 연결성, "
-        "수리권, 수질, 행정 협의를 함께 확인해야 합니다."
-    )
+        left, right = st.columns(2)
+        with left:
+            render_section_header("주요 위험 원인별 평균 위험점수")
+            driver_fig = make_driver_chart(features)
+            if driver_fig:
+                st.plotly_chart(driver_fig, use_container_width=True)
+                st.caption("최종 산정 결과에서 주요 위험 원인별 평균 위험점수를 비교합니다.")
+            else:
+                st.info("main_risk_driver 또는 final_water_risk_score 컬럼이 없어 위험 원인 차트를 건너뛰었습니다.")
+        with right:
+            render_section_header(f"{focus_target} 위험 구성요소 그래프")
+            component_fig = make_component_chart(features, focus_target)
+            if component_fig:
+                st.plotly_chart(component_fig, use_container_width=True)
+                st.caption("원점수와 가중 기여점수를 함께 보면 해당 시·군의 위험 원인을 빠르게 설명할 수 있습니다.")
+            else:
+                st.info("구성요소 점수 컬럼이 없어 상세 구성 차트를 건너뛰었습니다.")
 
-    selected_row = filtered[filtered["sigungu"] == focus_target]
-    if selected_row.empty:
-        selected_row = filtered.sort_values(["priority_rank", "risk_score"], ascending=[True, False]).head(1)
-    if not selected_row.empty:
-        report_html = build_html_report(selected_row.iloc[0], focus_candidates)
-        st.download_button(
-            label=f"{focus_target} HTML 의사결정 리포트 다운로드",
-            data=report_html.encode("utf-8-sig"),
-            file_name=f"AquaGuard_AI_{focus_target}_decision_report.html",
-            mime="text/html",
-            use_container_width=True,
+        focus_row = filtered[filtered["sigungu"] == focus_target]
+        if not focus_row.empty and has_missing_reservoir_context(focus_row):
+            render_missing_reservoir_note(focus_row)
+            row = focus_row.iloc[0]
+            st.caption(
+                " · ".join(
+                    [
+                        f"기준일: {format_date_display(row.get('basis_date'), '저수지 기준일 없음')}",
+                        f"분석 기준: {build_analysis_basis(row)}",
+                    ]
+                )
+            )
+
+    with priority_tab:
+        render_section_header(
+            "우선 점검 순위",
+            "현재 필터 기준으로 가장 먼저 확인할 시·군과 권고 조치를 정리했습니다.",
         )
+        priority_table = build_priority_table(filtered, features, top_n)
+        if priority_table.empty:
+            render_empty_state()
+        else:
+            st.dataframe(format_display_dataframe(priority_table), use_container_width=True, hide_index=True)
+
+        render_section_header(
+            "대체 수원 후보",
+            f"{focus_target} 기준으로 이미 생성된 후보 결과를 보여줍니다.",
+        )
+        if focus_candidates.empty:
+            st.info("조건에 맞는 대체 수원 후보 데이터가 없습니다.")
+        else:
+            st.dataframe(format_display_dataframe(candidate_display(focus_candidates)), use_container_width=True, hide_index=True)
+            st.download_button(
+                label=f"{focus_target} 대체 수원 후보 CSV 다운로드",
+                data=focus_candidates.to_csv(index=False).encode("utf-8-sig"),
+                file_name=f"{focus_target}_alternative_source_top5.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+    with raw_tab:
+        render_section_header(
+            "성능 검증 요약",
+            "모델 성능 파일에 실제 존재하는 지표만 보여줍니다. 없는 지표는 표시하지 않습니다.",
+        )
+        if performance_cards:
+            render_kpi_cards(performance_cards[:5])
+            if len(performance_cards) > 5:
+                render_kpi_cards(performance_cards[5:])
+        else:
+            st.info("성능 검증 지표 컬럼 또는 리포트 항목이 없어 표시할 수 있는 지표가 없습니다.")
+
+        render_section_header("상세 데이터 및 원본 결과 확인", "요약 판단 이후 필요한 원본 산정 결과를 확인합니다.")
+        detailed = filtered.rename(
+            columns={
+                "priority_rank": "우선순위",
+                "sigungu": "시·군",
+                "risk_score": "위험점수",
+                "risk_level": "위험등급",
+                "main_risk_driver": "주요 위험 원인",
+                "recommended_action": "권고 조치",
+                "basis_date": "기준일",
+                "analysis_mode": "분석 기준",
+            }
+        )
+        render_missing_reservoir_note(detailed)
+        st.dataframe(prepare_main_detail_display(detailed), use_container_width=True, hide_index=True)
+
+        with st.expander("원본 최종 산정 결과 보기"):
+            st.dataframe(format_display_dataframe(features), use_container_width=True, hide_index=True)
+            st.download_button(
+                label="최종 산정 결과 CSV 다운로드",
+                data=features.to_csv(index=False).encode("utf-8-sig"),
+                file_name="aquaguard_sigungu_features.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+        with st.expander("성능 검증·학습 이력 원본 보기"):
+            if not gru_history.empty:
+                st.markdown("#### GRU 학습 이력")
+                st.dataframe(format_display_dataframe(gru_history), use_container_width=True, hide_index=True)
+            else:
+                st.info("GRU 학습 이력 파일이 없습니다.")
+            if not ae_history.empty:
+                st.markdown("#### AutoEncoder 학습 이력")
+                st.dataframe(format_display_dataframe(ae_history), use_container_width=True, hide_index=True)
+            else:
+                st.info("AutoEncoder 학습 이력 파일이 없습니다.")
+            if report_text:
+                st.markdown("#### AI 모델 리포트")
+                st.markdown(report_text)
+            if not validation.empty:
+                st.markdown("#### 최종 검증 체크 결과")
+                st.dataframe(format_display_dataframe(validation), use_container_width=True, hide_index=True)
+
+        with st.expander("보고서용 이미지 확인"):
+            for filename, caption in REPORT_FIGURES_LIST:
+                path = resolve_report_figure_path(filename)
+                if path.exists():
+                    st.image(str(path), caption=caption, use_container_width=True)
+                else:
+                    st.warning(f"이미지 파일이 없습니다: {path}")
+
+        render_section_header("설명 notes", "비기술 검토자가 볼 때 필요한 해석 기준만 짧게 남겼습니다.")
+        st.info(
+            "AquaGuard AI 결과는 공개데이터 기반 의사결정 참고자료입니다. 실제 대응은 현장 저수율, 관로 연결성, "
+            "수리권, 수질, 행정 협의를 함께 확인해야 합니다."
+        )
+
+        selected_row = filtered[filtered["sigungu"] == focus_target]
+        if selected_row.empty:
+            selected_row = filtered.sort_values(["priority_rank", "risk_score"], ascending=[True, False]).head(1)
+        if not selected_row.empty:
+            report_html = build_html_report(selected_row.iloc[0], focus_candidates)
+            st.download_button(
+                label=f"{focus_target} HTML 의사결정 리포트 다운로드",
+                data=report_html.encode("utf-8-sig"),
+                file_name=f"AquaGuard_AI_{focus_target}_decision_report.html",
+                mime="text/html",
+                use_container_width=True,
+            )
 
     show_load_messages([candidate_msg, live_msg, ai_msg, gru_msg, ae_msg, validation_msg, training_msg, report_msg])
 
