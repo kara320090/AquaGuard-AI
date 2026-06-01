@@ -49,6 +49,32 @@ def inject_css() -> None:
             border-radius: 8px;
             padding: 14px 16px;
         }
+        .ag-page-title {
+            margin: 0 0 0.35rem 0;
+            font-size: 2.1rem;
+            line-height: 1.2;
+            letter-spacing: 0;
+            font-weight: 750;
+        }
+        .ag-basis-card {
+            background: #f8fafc;
+            border: 1px solid #dbe4f0;
+            border-radius: 8px;
+            padding: 0.85rem 1rem;
+            margin-top: 0.3rem;
+        }
+        .ag-basis-label {
+            color: #475569;
+            font-size: 0.78rem;
+            font-weight: 700;
+            margin-bottom: 0.35rem;
+        }
+        .ag-basis-value {
+            color: #0f172a;
+            font-size: 0.95rem;
+            line-height: 1.45;
+            font-weight: 650;
+        }
         .ag-section {
             margin-top: 1.6rem;
             padding-top: 0.5rem;
@@ -68,9 +94,20 @@ def inject_css() -> None:
 
 
 def render_page_header(title: str, service_definition: str, latest_basis: str) -> None:
-    st.title(title)
-    st.caption(service_definition)
-    st.markdown(f"**최신 분석 기준:** {latest_basis}")
+    left, right = st.columns([3.4, 1.15])
+    with left:
+        st.markdown(f'<h1 class="ag-page-title">{title}</h1>', unsafe_allow_html=True)
+        st.caption(service_definition)
+    with right:
+        st.markdown(
+            f"""
+            <div class="ag-basis-card">
+                <div class="ag-basis-label">최신 분석 기준</div>
+                <div class="ag-basis-value">{latest_basis}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_section_header(title: str, description: str | None = None) -> None:
