@@ -452,6 +452,48 @@ def available_levels(summary: pd.DataFrame) -> list[str]:
     return [x for x in order if x in found] + sorted([x for x in found if x not in order])
 
 
+def region_checkbox_key(region: str) -> str:
+    return f"live_region_checkbox_{region}"
+
+
+def render_region_checkboxes(regions: list[str]) -> list[str]:
+    selected_existing = [x for x in st.session_state.get("live_region_filter", regions) if x in regions]
+    if "live_region_select_all" not in st.session_state:
+        st.session_state.live_region_select_all = True
+    if "live_region_select_all_previous" not in st.session_state:
+        st.session_state.live_region_select_all_previous = bool(st.session_state.live_region_select_all)
+
+    select_all_current = bool(st.session_state.live_region_select_all)
+    select_all_previous = bool(st.session_state.live_region_select_all_previous)
+    deselect_all_now = select_all_previous and not select_all_current
+
+    for region in regions:
+        key = region_checkbox_key(region)
+        if key not in st.session_state:
+            st.session_state[key] = region in selected_existing
+        if select_all_current:
+            st.session_state[key] = True
+        elif deselect_all_now:
+            st.session_state[key] = False
+
+    select_all = st.checkbox("전체 지역", key="live_region_select_all")
+    if select_all:
+        for region in regions:
+            st.session_state[region_checkbox_key(region)] = True
+
+    selected_regions: list[str] = []
+    cols = st.columns(2)
+    for idx, region in enumerate(regions):
+        key = region_checkbox_key(region)
+        checked = cols[idx % 2].checkbox(region, key=key, disabled=select_all)
+        if select_all or checked:
+            selected_regions.append(region)
+
+    st.session_state.live_region_filter = selected_regions
+    st.session_state.live_region_select_all_previous = select_all
+    return selected_regions
+
+
 def render_sidebar(summary: pd.DataFrame, latest_basis: str) -> tuple[list[str], list[str], bool]:
     regions = summary.sort_values("final_live_priority_rank")["sigungu"].dropna().astype(str).tolist() if "final_live_priority_rank" in summary.columns else sorted(summary["sigungu"].dropna().astype(str).tolist())
     levels = available_levels(summary)
@@ -466,6 +508,10 @@ def render_sidebar(summary: pd.DataFrame, latest_basis: str) -> tuple[list[str],
         st.header("필터")
         if st.button("기본값으로 초기화", use_container_width=True):
             st.session_state.live_region_filter = regions
+            st.session_state.live_region_select_all = True
+            st.session_state.live_region_select_all_previous = True
+            for region in regions:
+                st.session_state[region_checkbox_key(region)] = True
             st.session_state.live_level_filter = levels
             st.session_state.live_chart_top_n = 10
             st.session_state.live_summary_top_n = 10
@@ -476,7 +522,7 @@ def render_sidebar(summary: pd.DataFrame, latest_basis: str) -> tuple[list[str],
         st.caption(f"Live 기준일: {latest_basis}")
 
         st.markdown("#### 지역/대상")
-        selected_regions = st.multiselect("시·군", regions, key="live_region_filter")
+        selected_regions = render_region_checkboxes(regions)
 
         st.markdown("#### 모델/위험등급")
         selected_levels = st.multiselect("Live 위험등급", levels, key="live_level_filter")
@@ -751,8 +797,7 @@ def main() -> None:
 
     selected_regions, selected_levels, only_updated = render_sidebar(summary, latest_basis)
     filtered = summary.copy()
-    if selected_regions:
-        filtered = filtered[filtered["sigungu"].isin(selected_regions)]
+    filtered = filtered[filtered["sigungu"].isin(selected_regions)] if selected_regions else filtered.iloc[0:0]
     if selected_levels and "final_live_water_risk_level" in filtered.columns:
         filtered = filtered[filtered["final_live_water_risk_level"].isin(selected_levels)]
     if only_updated:
