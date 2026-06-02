@@ -1002,6 +1002,9 @@ def render_sidebar(source_df: pd.DataFrame) -> str:
         if st.button("기본값으로 초기화", use_container_width=True):
             st.session_state.analysis_mode = "최종 산정"
             st.session_state.selected_regions = all_regions
+            st.session_state.main_region_select_all = True
+            for region in all_regions:
+                st.session_state[region_checkbox_key("main", region)] = True
             st.session_state.selected_levels = available_levels(source_df)
             st.session_state.main_chart_top_n = 10
             st.session_state.main_priority_top_n = 10
@@ -1013,6 +1016,51 @@ def render_sidebar(source_df: pd.DataFrame) -> str:
     return mode
 
 
+def region_checkbox_key(prefix: str, region: str) -> str:
+    return f"{prefix}_region_checkbox_{region}"
+
+
+def set_all_region_checkboxes(prefix: str, regions: list[str]) -> None:
+    select_all = bool(st.session_state.get(f"{prefix}_region_select_all", False))
+    for region in regions:
+        st.session_state[region_checkbox_key(prefix, region)] = select_all
+
+
+def update_region_select_all(prefix: str, regions: list[str]) -> None:
+    st.session_state[f"{prefix}_region_select_all"] = all(
+        bool(st.session_state.get(region_checkbox_key(prefix, region), False))
+        for region in regions
+    )
+
+
+def render_region_checkboxes(regions: list[str], prefix: str, selection_key: str) -> list[str]:
+    selected_existing = [x for x in st.session_state.get(selection_key, regions) if x in regions]
+    all_key = f"{prefix}_region_select_all"
+
+    if all_key not in st.session_state:
+        st.session_state[all_key] = True
+
+    for region in regions:
+        key = region_checkbox_key(prefix, region)
+        if key not in st.session_state:
+            st.session_state[key] = bool(st.session_state[all_key]) or region in selected_existing
+        if bool(st.session_state[all_key]):
+            st.session_state[key] = True
+
+    st.checkbox("전체 지역", key=all_key, on_change=set_all_region_checkboxes, args=(prefix, regions))
+
+    selected_regions: list[str] = []
+    cols = st.columns(2)
+    for idx, region in enumerate(regions):
+        key = region_checkbox_key(prefix, region)
+        checked = cols[idx % 2].checkbox(region, key=key, on_change=update_region_select_all, args=(prefix, regions))
+        if checked:
+            selected_regions.append(region)
+
+    st.session_state[selection_key] = selected_regions
+    return selected_regions
+
+
 def render_filters_for_mode(source_df: pd.DataFrame, latest_basis: str) -> tuple[list[str], list[str]]:
     all_regions = sorted(source_df["sigungu"].dropna().astype(str).unique().tolist()) if not source_df.empty else []
     levels = available_levels(source_df)
@@ -1020,13 +1068,14 @@ def render_filters_for_mode(source_df: pd.DataFrame, latest_basis: str) -> tuple
         st.session_state.selected_regions = all_regions
     if "selected_levels" not in st.session_state:
         st.session_state.selected_levels = levels
-    st.session_state.selected_regions = [r for r in st.session_state.selected_regions if r in all_regions] or all_regions
+    st.session_state.selected_regions = [r for r in st.session_state.selected_regions if r in all_regions]
     st.session_state.selected_levels = [r for r in st.session_state.selected_levels if r in levels] or levels
 
     with st.sidebar:
         st.caption(f"최신 기준: {latest_basis}")
         st.markdown("#### 지역/대상")
-        selected_regions = st.multiselect("시·군", all_regions, key="selected_regions")
+        st.caption("시·군")
+        selected_regions = render_region_checkboxes(all_regions, "main", "selected_regions")
 
         st.markdown("#### 모델/위험등급")
         selected_levels = st.multiselect("위험등급", levels, key="selected_levels")
@@ -1110,8 +1159,7 @@ def main() -> None:
     selected_regions, selected_levels = render_filters_for_mode(source_df, latest_basis)
 
     filtered = source_df.copy()
-    if selected_regions:
-        filtered = filtered[filtered["sigungu"].isin(selected_regions)]
+    filtered = filtered[filtered["sigungu"].isin(selected_regions)] if selected_regions else filtered.iloc[0:0]
     if selected_levels:
         filtered = filtered[filtered["risk_level"].isin(selected_levels)]
 

@@ -568,6 +568,51 @@ def make_rate_compare_chart(watch: pd.DataFrame, top_n: int):
     return fig
 
 
+def region_checkbox_key(prefix: str, region: str) -> str:
+    return f"{prefix}_region_checkbox_{region}"
+
+
+def set_all_region_checkboxes(prefix: str, regions: list[str]) -> None:
+    select_all = bool(st.session_state.get(f"{prefix}_region_select_all", False))
+    for region in regions:
+        st.session_state[region_checkbox_key(prefix, region)] = select_all
+
+
+def update_region_select_all(prefix: str, regions: list[str]) -> None:
+    st.session_state[f"{prefix}_region_select_all"] = all(
+        bool(st.session_state.get(region_checkbox_key(prefix, region), False))
+        for region in regions
+    )
+
+
+def render_region_checkboxes(regions: list[str], prefix: str, selection_key: str) -> list[str]:
+    selected_existing = [x for x in st.session_state.get(selection_key, regions) if x in regions]
+    all_key = f"{prefix}_region_select_all"
+
+    if all_key not in st.session_state:
+        st.session_state[all_key] = True
+
+    for region in regions:
+        key = region_checkbox_key(prefix, region)
+        if key not in st.session_state:
+            st.session_state[key] = bool(st.session_state[all_key]) or region in selected_existing
+        if bool(st.session_state[all_key]):
+            st.session_state[key] = True
+
+    st.checkbox("전체 지역", key=all_key, on_change=set_all_region_checkboxes, args=(prefix, regions))
+
+    selected_regions: list[str] = []
+    cols = st.columns(2)
+    for idx, region in enumerate(regions):
+        key = region_checkbox_key(prefix, region)
+        checked = cols[idx % 2].checkbox(region, key=key, on_change=update_region_select_all, args=(prefix, regions))
+        if checked:
+            selected_regions.append(region)
+
+    st.session_state[selection_key] = selected_regions
+    return selected_regions
+
+
 def render_sidebar(watch: pd.DataFrame) -> tuple[list[str], list[str]]:
     sigungu_options = watch.sort_values("watch_rank")["sigungu"].dropna().astype(str).tolist() if "watch_rank" in watch.columns else sorted(watch["sigungu"].dropna().astype(str).tolist())
     levels = watch["watch_level"].dropna().astype(str).unique().tolist() if "watch_level" in watch.columns else []
@@ -577,13 +622,16 @@ def render_sidebar(watch: pd.DataFrame) -> tuple[list[str], list[str]]:
     if "watch_level_filter" not in st.session_state:
         st.session_state.watch_level_filter = levels
 
-    st.session_state.watch_sigungu_filter = [x for x in st.session_state.watch_sigungu_filter if x in sigungu_options] or sigungu_options
+    st.session_state.watch_sigungu_filter = [x for x in st.session_state.watch_sigungu_filter if x in sigungu_options]
     st.session_state.watch_level_filter = [x for x in st.session_state.watch_level_filter if x in levels] or levels
 
     with st.sidebar:
         st.header("필터")
         if st.button("기본값으로 초기화", use_container_width=True):
             st.session_state.watch_sigungu_filter = sigungu_options
+            st.session_state.watch_region_select_all = True
+            for region in sigungu_options:
+                st.session_state[region_checkbox_key("watch", region)] = True
             st.session_state.watch_level_filter = levels
             st.session_state.watch_summary_top_n = 10
             st.session_state.watch_risk_top_n = 10
@@ -594,7 +642,8 @@ def render_sidebar(watch: pd.DataFrame) -> tuple[list[str], list[str]]:
         st.caption(f"저수지 기준일: {latest_date(watch, ['reservoir_latest_date'])}")
 
         st.markdown("#### 지역/대상")
-        selected_regions = st.multiselect("시·군", sigungu_options, key="watch_sigungu_filter")
+        st.caption("시·군")
+        selected_regions = render_region_checkboxes(sigungu_options, "watch", "watch_sigungu_filter")
 
         st.markdown("#### 모델/위험등급")
         selected_levels = st.multiselect("Watch 등급", levels, key="watch_level_filter")
@@ -659,8 +708,7 @@ def main() -> None:
 
     selected_regions, selected_levels = render_sidebar(watch)
     filtered = watch.copy()
-    if selected_regions:
-        filtered = filtered[filtered["sigungu"].isin(selected_regions)]
+    filtered = filtered[filtered["sigungu"].isin(selected_regions)] if selected_regions else filtered.iloc[0:0]
     if selected_levels and "watch_level" in filtered.columns:
         filtered = filtered[filtered["watch_level"].isin(selected_levels)]
 
