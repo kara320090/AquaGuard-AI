@@ -161,12 +161,12 @@ def render_kpi_cards(cards: list[tuple[str, str, str | None]]) -> None:
         col.metric(label, value, help=help_text)
 
 
-def render_top_n_slider(label: str, total: int, key: str, default: int = 10, max_cap: int = 15, help_text: str | None = None) -> int:
+def render_top_n_slider(label: str, total: int, key: str, default: int = 10, max_cap: int = 15, help: str | None = None) -> int:
     if total <= 5:
         return max(total, 0)
     max_value = min(max_cap, total)
     value = min(max(st.session_state.get(key, default), 5), max_value)
-    return st.slider(label, 5, max_value, value, key=key, help=help_text)
+    return st.slider(label, 5, max_value, value, key=key, help=help)
 
 
 def format_value(value, suffix: str = "", decimals: int = 1) -> str:
