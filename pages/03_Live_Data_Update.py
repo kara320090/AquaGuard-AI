@@ -161,6 +161,14 @@ def render_kpi_cards(cards: list[tuple[str, str, str | None]]) -> None:
         col.metric(label, value, help=help_text)
 
 
+def render_top_n_slider(label: str, total: int, key: str, default: int = 10, max_cap: int = 15, help_text: str | None = None) -> int:
+    if total <= 5:
+        return max(total, 0)
+    max_value = min(max_cap, total)
+    value = min(max(st.session_state.get(key, default), 5), max_value)
+    return st.slider(label, 5, max_value, value, key=key, help=help_text)
+
+
 def format_value(value, suffix: str = "", decimals: int = 1) -> str:
     if value is None or pd.isna(value):
         return "N/A"
@@ -841,12 +849,9 @@ def main() -> None:
     )
 
     with summary_tab:
-        summary_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
-        summary_top_n = st.slider(
+        summary_top_n = render_top_n_slider(
             "우선순위 표시 수",
-            5,
-            summary_max_top,
-            min(st.session_state.get("live_summary_top_n", 10), summary_max_top),
+            len(filtered),
             key="live_summary_top_n",
             help="요약·우선순위 탭의 점검 우선순위 표에만 적용됩니다.",
         )
@@ -870,12 +875,9 @@ def main() -> None:
         st.dataframe(format_display_dataframe(status_table), use_container_width=True, hide_index=True)
 
     with chart_tab:
-        chart_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
-        chart_top_n = st.slider(
+        chart_top_n = render_top_n_slider(
             "차트 표시 수",
-            5,
-            chart_max_top,
-            min(st.session_state.get("live_chart_top_n", 10), chart_max_top),
+            len(filtered),
             key="live_chart_top_n",
             help="위험도 차트 탭의 순위·변화량 차트에만 적용됩니다.",
         )

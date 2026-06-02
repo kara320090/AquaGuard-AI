@@ -138,6 +138,14 @@ def render_kpi_cards(cards: list[tuple[str, str, str | None]]) -> None:
         col.metric(label, value, help=help_text)
 
 
+def render_top_n_slider(label: str, total: int, key: str, default: int = 10, max_cap: int = 14, help_text: str | None = None) -> int:
+    if total <= 5:
+        return max(total, 0)
+    max_value = min(max_cap, total)
+    value = min(max(st.session_state.get(key, default), 5), max_value)
+    return st.slider(label, 5, max_value, value, key=key, help=help_text)
+
+
 def format_value(value, suffix: str = "", decimals: int = 1) -> str:
     if value is None or pd.isna(value):
         return "N/A"
@@ -848,12 +856,9 @@ def main() -> None:
     basis_tab, insight_tab, raw_tab = st.tabs(["AI 계절·성능", "예측·이상탐지", "원본 결과"])
 
     with basis_tab:
-        basis_max_top = max(5, min(14, len(filtered))) if not filtered.empty else 5
-        basis_top_n = st.slider(
+        basis_top_n = render_top_n_slider(
             "계절 비교 표시 수",
-            5,
-            basis_max_top,
-            min(st.session_state.get("ai_basis_top_n", 10), basis_max_top),
+            len(filtered),
             key="ai_basis_top_n",
             help="AI 계절 비교 기준 탭의 학습 데이터 요약 차트에만 적용됩니다.",
         )
@@ -889,12 +894,9 @@ def main() -> None:
             st.info("epoch 또는 valid_mae 컬럼이 없어 GRU 학습 추이 차트를 건너뛰었습니다.")
 
     with insight_tab:
-        insight_max_top = max(5, min(14, len(filtered))) if not filtered.empty else 5
-        insight_top_n = st.slider(
+        insight_top_n = render_top_n_slider(
             "예측·우선순위 표시 수",
-            5,
-            insight_max_top,
-            min(st.session_state.get("ai_insight_top_n", 10), insight_max_top),
+            len(filtered),
             key="ai_insight_top_n",
             help="점검 우선순위와 예측·이상탐지 차트에만 적용됩니다.",
         )

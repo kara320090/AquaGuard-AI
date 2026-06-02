@@ -133,6 +133,14 @@ def render_kpi_cards(cards: list[tuple[str, str, str | None]]) -> None:
         col.metric(label, value, help=help_text)
 
 
+def render_top_n_slider(label: str, total: int, key: str, default: int = 10, max_cap: int = 15, help_text: str | None = None) -> int:
+    if total <= 5:
+        return max(total, 0)
+    max_value = min(max_cap, total)
+    value = min(max(st.session_state.get(key, default), 5), max_value)
+    return st.slider(label, 5, max_value, value, key=key, help=help_text)
+
+
 def format_value(value, suffix: str = "", decimals: int = 1) -> str:
     if value is None or pd.isna(value):
         return "N/A"
@@ -735,12 +743,9 @@ def main() -> None:
     )
 
     with summary_tab:
-        summary_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
-        summary_top_n = st.slider(
+        summary_top_n = render_top_n_slider(
             "점검 우선순위 표시 수",
-            5,
-            summary_max_top,
-            min(st.session_state.get("watch_summary_top_n", 10), summary_max_top),
+            len(filtered),
             key="watch_summary_top_n",
             help="Watchlist 요약 탭의 점검 우선순위 표에만 적용됩니다.",
         )
@@ -756,12 +761,9 @@ def main() -> None:
         st.dataframe(format_display_dataframe(make_watch_priority_table(filtered, summary_top_n)), use_container_width=True, hide_index=True)
 
     with risk_tab:
-        risk_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
-        risk_top_n = st.slider(
+        risk_top_n = render_top_n_slider(
             "저수율 차트 표시 수",
-            5,
-            risk_max_top,
-            min(st.session_state.get("watch_risk_top_n", 10), risk_max_top),
+            len(filtered),
             key="watch_risk_top_n",
             help="저수율 위험도 차트에만 적용됩니다.",
         )
@@ -807,12 +809,9 @@ def main() -> None:
         if "facility_latest_reservoir_rate" in facility_for_table.columns and facility_for_table["facility_latest_reservoir_rate"].isna().all():
             st.info("시설별 최신 저수율은 원천 데이터에서 직접 제공되지 않아, 시·군 단위 저수율과 시설 규모를 결합해 우선순위를 산정했습니다.")
 
-        facility_max_top = max(5, min(15, len(facility_for_table))) if not facility_for_table.empty else 5
-        facility_top_n = st.slider(
+        facility_top_n = render_top_n_slider(
             "시설 우선순위 표시 수",
-            5,
-            facility_max_top,
-            min(st.session_state.get("watch_facility_top_n", 10), facility_max_top),
+            len(facility_for_table),
             key="watch_facility_top_n",
             help="선택한 시·군의 시설별 점검 표에만 적용됩니다.",
         )

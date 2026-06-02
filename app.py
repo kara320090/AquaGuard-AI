@@ -405,6 +405,14 @@ def render_kpi_cards(cards: list[tuple[str, str, str | None]]) -> None:
         col.metric(label, value, help=help_text)
 
 
+def render_top_n_slider(label: str, total: int, key: str, default: int = 10, max_cap: int = 15, help_text: str | None = None) -> int:
+    if total <= 5:
+        return max(total, 0)
+    max_value = min(max_cap, total)
+    value = min(max(st.session_state.get(key, default), 5), max_value)
+    return st.slider(label, 5, max_value, value, key=key, help=help_text)
+
+
 @st.cache_data(show_spinner=False)
 def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame, str | None]:
     path = Path(path_text)
@@ -1217,12 +1225,9 @@ def main() -> None:
             render_empty_state("지도에 표시할 좌표 또는 위험도 데이터가 없습니다.")
 
     with analysis_tab:
-        chart_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
-        chart_top_n = st.slider(
+        chart_top_n = render_top_n_slider(
             "위험도 차트 표시 수",
-            5,
-            chart_max_top,
-            min(st.session_state.get("main_chart_top_n", 10), chart_max_top),
+            len(filtered),
             key="main_chart_top_n",
             help="위험도 분석 탭의 순위 차트에만 적용됩니다.",
         )
@@ -1284,12 +1289,9 @@ def main() -> None:
             )
 
     with priority_tab:
-        priority_max_top = max(5, min(15, len(filtered))) if not filtered.empty else 5
-        priority_top_n = st.slider(
+        priority_top_n = render_top_n_slider(
             "점검 우선순위 표시 수",
-            5,
-            priority_max_top,
-            min(st.session_state.get("main_priority_top_n", 10), priority_max_top),
+            len(filtered),
             key="main_priority_top_n",
             help="점검·대체수원 탭의 우선순위 표에만 적용됩니다.",
         )
