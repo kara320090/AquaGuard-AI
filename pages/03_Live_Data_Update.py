@@ -22,6 +22,18 @@ SOIL_STATUS_PATH = REPORT_TABLES / "latest_adms_soil_moisture_status.csv"
 ADMS_RESERVOIR_STATUS_PATH = REPORT_TABLES / "latest_adms_reservoir_support_status.csv"
 CROSSCHECK_PATH = REPORT_TABLES / "latest_reservoir_source_crosscheck.csv"
 METHOD_PATH = META / "live_feature_method.md"
+TRAINING_DATA_PATH = PROCESSED / "01_reservoir_sigungu_daily.csv"
+
+EXCLUDED_SIGUNGU = {"계룡시"}
+SIGUNGU_FILTER_COLUMNS = (
+    "sigungu",
+    "target_sigungu",
+    "candidate_sigungu",
+    "시·군",
+    "시군",
+    "시군명",
+    "adms_sigun_name",
+)
 
 RISK_COLORS = {
     "심각": "#c62828",
@@ -48,6 +60,18 @@ def inject_css() -> None:
             border: 1px solid #e5e7eb;
             border-radius: 8px;
             padding: 14px 16px;
+        }
+        [data-testid="stMetricValue"],
+        [data-testid="stMetricValue"] > div {
+            white-space: normal !important;
+            overflow: visible !important;
+            text-overflow: clip !important;
+            overflow-wrap: anywhere;
+            word-break: keep-all;
+            line-height: 1.2;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: clamp(1.45rem, 2vw, 2.2rem);
         }
         .ag-page-title {
             margin: 0 0 0.35rem 0;
@@ -312,6 +336,16 @@ def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame
         return pd.DataFrame(), f"데이터 파일을 읽지 못했습니다: {path} ({exc})"
 
 
+def exclude_unavailable_regions(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for col in SIGUNGU_FILTER_COLUMNS:
+        if col in df.columns:
+            mask = mask | df[col].astype(str).str.strip().isin(EXCLUDED_SIGUNGU)
+    return df.loc[~mask].reset_index(drop=True)
+
+
 @st.cache_data(show_spinner=False)
 def read_text_file(path_text: str) -> tuple[str, str | None]:
     path = Path(path_text)
@@ -347,6 +381,18 @@ def normalize_numeric(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return out
 
 
+def parse_live_date_values(values: pd.Series) -> pd.Series:
+    text = values.dropna().astype(str).str.strip()
+    text = text.str.replace(r"\.0$", "", regex=True)
+    parsed = pd.Series(pd.NaT, index=text.index, dtype="datetime64[ns]")
+    compact_mask = text.str.fullmatch(r"\d{8}")
+    if compact_mask.any():
+        parsed.loc[compact_mask] = pd.to_datetime(text.loc[compact_mask], format="%Y%m%d", errors="coerce")
+    if (~compact_mask).any():
+        parsed.loc[~compact_mask] = pd.to_datetime(text.loc[~compact_mask], errors="coerce")
+    return parsed
+
+
 def latest_date(frames: list[pd.DataFrame], columns: list[str]) -> str:
     dates = []
     for df in frames:
@@ -354,11 +400,48 @@ def latest_date(frames: list[pd.DataFrame], columns: list[str]) -> str:
             continue
         for col in columns:
             if col in df.columns:
-                parsed = pd.to_datetime(df[col], errors="coerce")
+                parsed = parse_live_date_values(df[col])
                 dates.extend(parsed.dropna().tolist())
     if not dates:
         return "N/A"
     return max(dates).strftime("%Y-%m-%d")
+
+
+def months_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> list[str]:
+    months: set[str] = set()
+    for df in frames:
+        if df.empty:
+            continue
+        for col in columns:
+            if col in df.columns:
+                parsed = parse_live_date_values(df[col]).dropna()
+                months.update(parsed.dt.to_period("M").astype(str).tolist())
+    return sorted(months)
+
+
+def select_default_ai_comparison_month(current_month: str, available_months: list[str]) -> str:
+    if not available_months or current_month == "N/A":
+        return "N/A"
+    current = pd.Period(current_month, freq="M")
+    candidates = [pd.Period(month, freq="M") for month in available_months]
+    same_month_previous_years = [month for month in candidates if month.month == current.month and month.year < current.year]
+    if same_month_previous_years:
+        return str(max(same_month_previous_years))
+    previous_months = [month for month in candidates if month < current]
+    return str(max(previous_months)) if previous_months else str(max(candidates))
+
+
+def build_basis_text(live_basis: str, training_history: pd.DataFrame) -> str:
+    live_month = pd.to_datetime(live_basis, errors="coerce")
+    live_month_text = live_month.to_period("M").strftime("%Y-%m") if pd.notna(live_month) else "N/A"
+    training_months = months_from_columns([training_history], ["date"])
+    ai_comparison_month = select_default_ai_comparison_month(live_month_text, training_months)
+    training_final_month = training_months[-1] if training_months else "N/A"
+    return (
+        f"Live 기준일 {live_basis}<br>"
+        f"AI 비교 기준월 {ai_comparison_month}<br>"
+        f"학습 데이터 최종월 {training_final_month}"
+    )
 
 
 def available_levels(summary: pd.DataFrame) -> list[str]:
@@ -369,7 +452,7 @@ def available_levels(summary: pd.DataFrame) -> list[str]:
     return [x for x in order if x in found] + sorted([x for x in found if x not in order])
 
 
-def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], bool]:
+def render_sidebar(summary: pd.DataFrame, latest_basis: str) -> tuple[list[str], list[str], bool]:
     regions = summary.sort_values("final_live_priority_rank")["sigungu"].dropna().astype(str).tolist() if "final_live_priority_rank" in summary.columns else sorted(summary["sigungu"].dropna().astype(str).tolist())
     levels = available_levels(summary)
     if "live_region_filter" not in st.session_state:
@@ -390,7 +473,7 @@ def render_sidebar(summary: pd.DataFrame) -> tuple[list[str], list[str], bool]:
             st.rerun()
 
         st.markdown("#### 기간")
-        st.caption(f"Live 기준일: {latest_date([summary], ['soil_data_date'])}")
+        st.caption(f"Live 기준일: {latest_basis}")
 
         st.markdown("#### 지역/대상")
         selected_regions = st.multiselect("시·군", regions, key="live_region_filter")
@@ -610,8 +693,19 @@ def main() -> None:
     adms_status, adms_msg = safe_read_data(str(ADMS_RESERVOIR_STATUS_PATH), required=False)
     cross, cross_msg = safe_read_data(str(CROSSCHECK_PATH), required=False)
     method, method_msg = read_text_file(str(METHOD_PATH))
+    training_history, _training_msg = safe_read_data(str(TRAINING_DATA_PATH), required=False)
 
     show_messages([summary_msg], stop_on_required=True)
+    live = exclude_unavailable_regions(live)
+    summary = exclude_unavailable_regions(summary)
+    status = exclude_unavailable_regions(status)
+    oldam_status = exclude_unavailable_regions(oldam_status)
+    kma_status = exclude_unavailable_regions(kma_status)
+    soil_status = exclude_unavailable_regions(soil_status)
+    adms_status = exclude_unavailable_regions(adms_status)
+    cross = exclude_unavailable_regions(cross)
+    training_history = exclude_unavailable_regions(training_history)
+
     if summary.empty:
         render_empty_state("Live 위험도 결과가 비어 있습니다.")
         st.stop()
@@ -635,14 +729,27 @@ def main() -> None:
     live = normalize_numeric(live, ["final_live_water_risk_score", "live_score_delta_from_baseline"])
     cross = normalize_numeric(cross, ["adms_rvow", "oldam_avg_reservoir_rate", "rvow_diff_oldam_minus_adms"])
 
-    latest_basis = latest_date([summary, live], ["soil_data_date", "date", "base_date"])
+    latest_basis = latest_date(
+        [summary, live, status, oldam_status, kma_status, soil_status, adms_status, cross],
+        [
+            "soil_data_date",
+            "date",
+            "base_date",
+            "weather_end_date",
+            "latest_measurement_date",
+            "collection_date_kst",
+            "query_date",
+            "tm2",
+            "adms_query_date",
+        ],
+    )
     render_page_header(
         "Live 데이터 갱신 위험도",
         "올담 저수지 snapshot, 기상청 AWS/ASOS, ADMS 토양수분을 반영해 최신 위험도 변화를 확인합니다.",
-        latest_basis,
+        build_basis_text(latest_basis, training_history),
     )
 
-    selected_regions, selected_levels, only_updated = render_sidebar(summary)
+    selected_regions, selected_levels, only_updated = render_sidebar(summary, latest_basis)
     filtered = summary.copy()
     if selected_regions:
         filtered = filtered[filtered["sigungu"].isin(selected_regions)]
@@ -676,8 +783,7 @@ def main() -> None:
             ("Live 분석 시·군", f"{len(filtered):,}곳", "현재 필터 기준 Live 결과 수입니다."),
             ("주의 이상 대상", f"{warning_count:,}곳", "Live 위험등급이 주의 이상인 대상 수입니다."),
             ("최고 위험 지역", str(top["sigungu"]) if top is not None else "N/A", "현재 필터 기준 Live 위험점수가 가장 높은 지역입니다."),
-            ("최신 데이터 반영", f"저수지 {oldam_count} / 기상 {kma_count} / 토양 {soil_count}", "최신 원천 데이터가 반영된 시·군 수입니다."),
-            ("최신 기준일", latest_basis, "Live 입력 데이터에서 확인 가능한 최신 날짜입니다."),
+            ("최신 데이터 반영", f"저수지 {oldam_count} · 기상 {kma_count} · 토양 {soil_count}", "최신 원천 데이터가 반영된 시·군 수입니다."),
         ]
     )
 

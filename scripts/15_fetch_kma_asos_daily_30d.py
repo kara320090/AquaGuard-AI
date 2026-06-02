@@ -76,6 +76,12 @@ def get_api_key():
     return key
 
 
+def build_request_url(params):
+    safe_params = dict(params)
+    safe_params["authKey"] = "***"
+    return requests.Request("GET", KMA_URL, params=safe_params).prepare().url.replace("%2A%2A%2A", "***")
+
+
 def download_kma():
     params = {
         "tm1": TM1,
@@ -84,6 +90,7 @@ def download_kma():
         "help": "0",
         "authKey": get_api_key(),
     }
+    request_url = build_request_url(params)
 
     r = requests.get(KMA_URL, params=params, timeout=90)
     r.raise_for_status()
@@ -105,7 +112,7 @@ def download_kma():
         print(text[:1000])
         raise RuntimeError("KMA API response looks like an error. Check auth key or parameters.")
 
-    return text, len(r.content), r.url
+    return text, len(r.content), request_url
 
 
 def parse_kma_text(text):
@@ -252,7 +259,7 @@ def write_status(raw_rows, filtered_rows, sigungu_count, raw_bytes, request_url)
         "tm1": TM1,
         "tm2": TM2,
         "source": "KMA_APIHUB_ASOS_DAILY_PERIOD",
-        "request_url_without_key": request_url.split("authKey=")[0] + "authKey=***",
+        "request_url_without_key": request_url,
         "raw_path": str(RAW_PATH.relative_to(ROOT)),
         "raw_bytes": raw_bytes,
         "raw_rows": raw_rows,
@@ -274,14 +281,73 @@ def write_status(raw_rows, filtered_rows, sigungu_count, raw_bytes, request_url)
     return status
 
 
+def fallback_sigungu_count(path):
+    if not path.exists():
+        return 0
+    try:
+        df = pd.read_csv(path)
+    except Exception:
+        return 0
+    if "sigungu" not in df.columns:
+        return 0
+    return int(df["sigungu"].dropna().astype(str).nunique())
+
+
+def write_failure_status(error_message, request_url):
+    sigungu_count = fallback_sigungu_count(SIGUNGU_PATH)
+    status_value = "FALLBACK_EXISTING" if sigungu_count else "FAILED"
+    status = pd.DataFrame([{
+        "collection_date_kst": TODAY,
+        "tm1": TM1,
+        "tm2": TM2,
+        "source": "KMA_APIHUB_ASOS_DAILY_PERIOD",
+        "request_url_without_key": request_url,
+        "raw_path": str(RAW_PATH.relative_to(ROOT)),
+        "raw_bytes": RAW_PATH.stat().st_size if RAW_PATH.exists() else 0,
+        "raw_rows": 0,
+        "filtered_chungnam_asos_rows": 0,
+        "sigungu_count": sigungu_count,
+        "status": status_value,
+        "error_message": str(error_message)[:500],
+    }])
+
+    status.to_csv(STATUS_PATH, index=False, encoding="utf-8-sig")
+
+    if LOG_PATH.exists():
+        old = pd.read_csv(LOG_PATH)
+        out = pd.concat([old, status], ignore_index=True, sort=False)
+    else:
+        out = status
+
+    out.to_csv(LOG_PATH, index=False, encoding="utf-8-sig")
+    return status
+
+
 def main():
     print("[AquaGuard AI] Fetch KMA ASOS daily 30d")
     print(f"period: {TM1} ~ {TM2}")
 
-    text, raw_bytes, request_url = download_kma()
-    parsed = parse_kma_text(text)
-    filtered = filter_chungnam_asos(parsed)
-    summary = build_sigungu_summary(filtered)
+    fallback_request_url = build_request_url({
+        "tm1": TM1,
+        "tm2": TM2,
+        "stn": "0",
+        "help": "0",
+        "authKey": "***",
+    })
+
+    try:
+        text, raw_bytes, request_url = download_kma()
+        parsed = parse_kma_text(text)
+        filtered = filter_chungnam_asos(parsed)
+        summary = build_sigungu_summary(filtered)
+    except Exception as exc:  # noqa: BLE001 - ASOS is optional and AWS/fallback can continue.
+        status = write_failure_status(exc, fallback_request_url)
+        print()
+        print(f"[WARN] KMA ASOS collection failed, continuing with AWS or existing weather data: {exc}")
+        print()
+        print("[Status]")
+        print(status.to_string(index=False))
+        return
 
     filtered.to_csv(STD_PATH, index=False, encoding="utf-8-sig")
     summary.to_csv(SIGUNGU_PATH, index=False, encoding="utf-8-sig")

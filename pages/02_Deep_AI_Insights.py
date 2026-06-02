@@ -23,6 +23,17 @@ GRU_HISTORY_PATH = REPORT_TABLES / "ai_gru_training_history.csv"
 AE_HISTORY_PATH = REPORT_TABLES / "ai_autoencoder_training_history.csv"
 REPORT_PATH = META / "deep_ai_model_report.md"
 
+EXCLUDED_SIGUNGU = {"계룡시"}
+SIGUNGU_FILTER_COLUMNS = (
+    "sigungu",
+    "target_sigungu",
+    "candidate_sigungu",
+    "시·군",
+    "시군",
+    "시군명",
+    "adms_sigun_name",
+)
+
 RISK_COLORS = {
     "심각": "#c62828",
     "심각후보": "#d84315",
@@ -323,6 +334,16 @@ def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame
         return pd.read_csv(path), None
     except Exception as exc:  # noqa: BLE001
         return pd.DataFrame(), f"데이터 파일을 읽지 못했습니다: {path} ({exc})"
+
+
+def exclude_unavailable_regions(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for col in SIGUNGU_FILTER_COLUMNS:
+        if col in df.columns:
+            mask = mask | df[col].astype(str).str.strip().isin(EXCLUDED_SIGUNGU)
+    return df.loc[~mask].reset_index(drop=True)
 
 
 @st.cache_data(show_spinner=False)
@@ -685,6 +706,12 @@ def main() -> None:
     report, report_msg = read_text_file(str(REPORT_PATH))
 
     show_messages([summary_msg], stop_on_required=True)
+    summary = exclude_unavailable_regions(summary)
+    forecast = exclude_unavailable_regions(forecast)
+    anomaly = exclude_unavailable_regions(anomaly)
+    live_summary = exclude_unavailable_regions(live_summary)
+    training_history = exclude_unavailable_regions(training_history)
+
     if summary.empty:
         render_empty_state("Deep AI 요약 결과가 비어 있습니다.")
         st.stop()
@@ -728,7 +755,7 @@ def main() -> None:
     render_page_header(
         "Deep AI 저수율 예측·이상탐지",
         "GRU 7일 후 저수율 예측과 AutoEncoder 이상 패턴 탐지를 결합해 학습 기반 위험 신호와 계절 비교 기준을 확인합니다.",
-        f"Live 기준일 {live_basis_date} · AI 비교 기준월 {selected_comparison_month} · 학습 데이터 최종월 {training_final_month}",
+        f"Live 기준일 {live_basis_date}<br>AI 비교 기준월 {selected_comparison_month}<br>학습 데이터 최종월 {training_final_month}",
     )
     st.info(
         f"Live 기준일 {live_basis_date}의 최신 공개 데이터와 AI 비교 기준월 {selected_comparison_month}의 학습 데이터를 계절 기준으로 비교합니다."
@@ -763,14 +790,6 @@ def main() -> None:
             ("AI 최고 위험 지역", str(top["sigungu"]) if top is not None else "N/A", "현재 필터 기준 Deep AI 위험도가 가장 높은 지역입니다."),
             ("최고 성능 모델", best_model, "성능 검증 파일에서 확인 가능한 모델입니다."),
             ("주요 성능 지표", main_metric, "존재하는 성능 지표만 표시합니다."),
-        ]
-    )
-    render_kpi_cards(
-        [
-            ("Live 기준일", live_basis_date, "Live/latest 공개 데이터에서 확인한 운영 기준일입니다."),
-            ("AI 비교 기준월", selected_comparison_month, "학습 데이터 범위에서 Live 기준월과 계절성이 같은 전년도 동일 월을 우선 선택합니다."),
-            ("학습 데이터 최종월", training_final_month, "AI 학습·비교에 쓰인 저수율 이력의 마지막 월입니다."),
-            ("모델 출력 기준월", ai_output_month, "현재 생성되어 있는 Deep AI 출력 파일의 실제 기준월입니다."),
         ]
     )
 

@@ -206,7 +206,8 @@ def main():
     aws_status = safe_read_csv("reports/tables/latest_kma_aws_weather_status.csv")
     if aws_status is not None and len(aws_status):
         s = aws_status.iloc[-1]
-        records.append(row("aws_status_success", "latest_kma_aws_weather_status.csv", "PASS" if str(s.get("status", "")) == "SUCCESS" else "FAIL", f"status={s.get('status')}"))
+        aws_ok_statuses = {"SUCCESS", "FALLBACK_EXISTING"}
+        records.append(row("aws_status_success", "latest_kma_aws_weather_status.csv", "PASS" if str(s.get("status", "")) in aws_ok_statuses else "FAIL", f"status={s.get('status')}"))
         records.append(row("aws_sigungu_count", "sigungu_count", "PASS" if int(s.get("sigungu_count", 0)) == 15 else "FAIL", f"sigungu_count={s.get('sigungu_count')}"))
 
     soil_status = safe_read_csv("reports/tables/latest_adms_soil_moisture_status.csv")

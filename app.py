@@ -28,6 +28,17 @@ AI_REPORT_PATH = META / "deep_ai_model_report.md"
 VALIDATION_PATH = META / "final_validation_report.csv"
 TRAINING_DATA_PATH = PROCESSED / "01_reservoir_sigungu_daily.csv"
 
+EXCLUDED_SIGUNGU = {"계룡시"}
+SIGUNGU_FILTER_COLUMNS = (
+    "sigungu",
+    "target_sigungu",
+    "candidate_sigungu",
+    "시·군",
+    "시군",
+    "시군명",
+    "adms_sigun_name",
+)
+
 FIG_RANKING = REPORT_FIGURES / "01_final_risk_ranking.png"
 FIG_COMPONENTS = REPORT_FIGURES / "02_risk_components_stacked.png"
 FIG_SCATTER = REPORT_FIGURES / "03_reservoir_vs_alternative_shortage_scatter.png"
@@ -412,6 +423,16 @@ def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame
         return pd.DataFrame(), f"지원하지 않는 데이터 형식입니다: {path}"
     except Exception as exc:  # noqa: BLE001 - dashboard should show a readable state.
         return pd.DataFrame(), f"데이터 파일을 읽지 못했습니다: {path} ({exc})"
+
+
+def exclude_unavailable_regions(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for col in SIGUNGU_FILTER_COLUMNS:
+        if col in df.columns:
+            mask = mask | df[col].astype(str).str.strip().isin(EXCLUDED_SIGUNGU)
+    return df.loc[~mask].reset_index(drop=True)
 
 
 @st.cache_data(show_spinner=False)
@@ -1031,6 +1052,16 @@ def main() -> None:
         render_empty_state("필수 위험도 산정 데이터가 비어 있습니다.")
         st.stop()
 
+    features = exclude_unavailable_regions(features)
+    candidates = exclude_unavailable_regions(candidates)
+    live_summary = exclude_unavailable_regions(live_summary)
+    ai_summary = exclude_unavailable_regions(ai_summary)
+    training_history = exclude_unavailable_regions(training_history)
+
+    if features.empty:
+        render_empty_state("분석 제외 지역을 제거한 뒤 표시할 위험도 산정 데이터가 없습니다.")
+        st.stop()
+
     numeric_cols = [
         "final_priority_rank",
         "final_water_risk_score",
@@ -1068,7 +1099,7 @@ def main() -> None:
     render_page_header(
         "충남 AquaGuard AI 농업용수 위험도 의사결정 대시보드",
         "기상·저수율·관정·작물·대체 수원 데이터를 기반으로 고위험 시·군과 점검 우선순위를 한눈에 확인합니다.",
-        f"Live {live_basis_month} · AI 비교 {ai_comparison_month} · 학습 데이터 최종 {training_final_month}",
+        f"Live 기준일 {latest_basis}<br>AI 비교 기준월 {ai_comparison_month}<br>학습 데이터 최종월 {training_final_month}",
     )
 
     if ai_comparison_fallback:

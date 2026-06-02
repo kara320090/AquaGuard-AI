@@ -15,6 +15,19 @@ PROCESSED = ROOT / "data" / "processed"
 WATCHLIST_PATH = REPORT_TABLES / "reservoir_watchlist.csv"
 FACILITY_STATUS_PATH = PROCESSED / "reservoir_facility_status_for_dashboard.csv"
 OLDAM_TODAY_PATH = PROCESSED / "latest_oldam_reservoir_today.csv"
+LIVE_FEATURE_PATH = PROCESSED / "latest_live_sigungu_features.csv"
+TRAINING_DATA_PATH = PROCESSED / "01_reservoir_sigungu_daily.csv"
+
+EXCLUDED_SIGUNGU = {"계룡시"}
+SIGUNGU_FILTER_COLUMNS = (
+    "sigungu",
+    "target_sigungu",
+    "candidate_sigungu",
+    "시·군",
+    "시군",
+    "시군명",
+    "adms_sigun_name",
+)
 
 WATCH_COLORS = {
     "심각": "#c62828",
@@ -297,6 +310,16 @@ def safe_read_data(path_text: str, required: bool = False) -> tuple[pd.DataFrame
         return pd.DataFrame(), f"데이터 파일을 읽지 못했습니다: {path} ({exc})"
 
 
+def exclude_unavailable_regions(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for col in SIGUNGU_FILTER_COLUMNS:
+        if col in df.columns:
+            mask = mask | df[col].astype(str).str.strip().isin(EXCLUDED_SIGUNGU)
+    return df.loc[~mask].reset_index(drop=True)
+
+
 def show_messages(messages: list[str | None], stop_on_required: bool = False) -> None:
     has_required = False
     for message in messages:
@@ -328,6 +351,45 @@ def latest_date(df: pd.DataFrame, columns: list[str]) -> str:
     if not dates:
         return "N/A"
     return max(dates).strftime("%Y-%m-%d")
+
+
+def months_from_columns(frames: list[pd.DataFrame], columns: list[str]) -> list[str]:
+    months: set[str] = set()
+    for df in frames:
+        if df.empty:
+            continue
+        for col in columns:
+            if col in df.columns:
+                parsed = pd.to_datetime(df[col], errors="coerce").dropna()
+                months.update(parsed.dt.to_period("M").astype(str).tolist())
+    return sorted(months)
+
+
+def select_default_ai_comparison_month(current_month: str, available_months: list[str]) -> str:
+    if not available_months or current_month == "N/A":
+        return "N/A"
+    current = pd.Period(current_month, freq="M")
+    candidates = [pd.Period(month, freq="M") for month in available_months]
+    same_month_previous_years = [month for month in candidates if month.month == current.month and month.year < current.year]
+    if same_month_previous_years:
+        return str(max(same_month_previous_years))
+    previous_months = [month for month in candidates if month < current]
+    return str(max(previous_months)) if previous_months else str(max(candidates))
+
+
+def build_basis_text(live: pd.DataFrame, training_history: pd.DataFrame, fallback_live_basis: str) -> str:
+    live_basis = latest_date(live, ["weather_end_date", "soil_data_date", "date", "base_date"]) if not live.empty else fallback_live_basis
+    live_basis = live_basis if live_basis != "N/A" else fallback_live_basis
+    live_month = pd.to_datetime(live_basis, errors="coerce")
+    live_month_text = live_month.to_period("M").strftime("%Y-%m") if pd.notna(live_month) else "N/A"
+    training_months = months_from_columns([training_history], ["date"])
+    ai_comparison_month = select_default_ai_comparison_month(live_month_text, training_months)
+    training_final_month = training_months[-1] if training_months else "N/A"
+    return (
+        f"Live 기준일 {live_basis}<br>"
+        f"AI 비교 기준월 {ai_comparison_month}<br>"
+        f"학습 데이터 최종월 {training_final_month}"
+    )
 
 
 def prepare_facility(facility: pd.DataFrame, sigungu: str) -> tuple[pd.DataFrame, int]:
@@ -546,8 +608,16 @@ def main() -> None:
     watch, watch_msg = safe_read_data(str(WATCHLIST_PATH), required=True)
     facility, facility_msg = safe_read_data(str(FACILITY_STATUS_PATH), required=True)
     oldam_today, oldam_msg = safe_read_data(str(OLDAM_TODAY_PATH), required=False)
+    live, _live_msg = safe_read_data(str(LIVE_FEATURE_PATH), required=False)
+    training_history, _training_msg = safe_read_data(str(TRAINING_DATA_PATH), required=False)
 
     show_messages([watch_msg, facility_msg], stop_on_required=True)
+    watch = exclude_unavailable_regions(watch)
+    facility = exclude_unavailable_regions(facility)
+    oldam_today = exclude_unavailable_regions(oldam_today)
+    live = exclude_unavailable_regions(live)
+    training_history = exclude_unavailable_regions(training_history)
+
     if watch.empty:
         render_empty_state("Watchlist 데이터가 비어 있습니다.")
         st.stop()
@@ -584,7 +654,7 @@ def main() -> None:
     render_page_header(
         "저수지 현황 및 이상징후 Watchlist",
         "저수율 위험도와 시설 정보를 결합해 우선 점검할 저수지·시군을 빠르게 확인합니다.",
-        latest_date(watch, ["reservoir_latest_date"]),
+        build_basis_text(live, training_history, latest_date(watch, ["reservoir_latest_date"])),
     )
 
     selected_regions, selected_levels = render_sidebar(watch)
@@ -632,7 +702,6 @@ def main() -> None:
                 ("주의 이상 대상", f"{severe_count:,}곳", "주의·경계·심각후보 등급 대상 수입니다."),
                 ("전체 저수지 시설", f"{facility_count:,}개", "대시보드에 연결된 저수지 시설 수입니다."),
                 ("최우선 시·군", str(top_watch["sigungu"]) if top_watch is not None else "N/A", "현재 필터 기준 Watch 1순위입니다."),
-                ("저수지 기준일", latest_date(filtered, ["reservoir_latest_date"]), "Watchlist 산정에 사용된 최신 기준일입니다."),
             ]
         )
         render_section_header("점검 우선순위", "저수율 위험점수가 높고 Watch 순위가 빠른 시·군을 먼저 확인합니다.")
