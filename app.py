@@ -1111,14 +1111,6 @@ def main() -> None:
             ("주요 성능 지표", main_metric, "존재하는 검증 지표만 표시합니다."),
         ]
     )
-    render_kpi_cards(
-        [
-            ("Live 기준월", live_basis_month, "Live/latest 공개 데이터에서 확인한 운영 기준월입니다."),
-            ("AI 비교 기준월", ai_comparison_month, "학습 데이터 범위에서 Live 기준월과 계절성이 같은 전년도 동일 월을 우선 선택합니다."),
-            ("학습 데이터 최종월", training_final_month, "AI 학습·비교에 쓰인 저수율 이력의 마지막 월입니다."),
-            ("최신 데이터 기준일", latest_period, "현재 분석 기준에서 확인 가능한 최신 날짜입니다."),
-        ]
-    )
 
     if filtered.empty:
         render_empty_state()
@@ -1130,10 +1122,11 @@ def main() -> None:
 
     with map_tab:
         render_section_header("지도 보기", "시·군별 위험점수를 지도에서 먼저 확인합니다.")
-        map_style_label = st.selectbox(
+        map_style_label = st.radio(
             "지도 유형",
             ["밝은 지도", "기본 지도"],
             index=0,
+            horizontal=True,
             help="밝은 지도는 흰색 배경의 Carto Positron 스타일로 발표 화면에서 더 선명하게 보입니다.",
         )
         map_style = {"밝은 지도": "carto-positron", "기본 지도": "open-street-map"}[map_style_label]
