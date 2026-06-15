@@ -37,11 +37,11 @@ file_exists,reports/tables/latest_kma_aws_weather_status.csv,PASS,
 file_exists,reports/tables/latest_adms_soil_moisture_status.csv,PASS,
 file_exists,reports/tables/latest_adms_reservoir_support_status.csv,PASS,
 file_exists,reports/tables/latest_reservoir_source_crosscheck.csv,PASS,
-figure_non_empty,reports/figures/01_final_risk_ranking.png,PASS,bytes=140912
-figure_non_empty,reports/figures/02_risk_components_stacked.png,PASS,bytes=125428
-figure_non_empty,reports/figures/03_reservoir_vs_alternative_shortage_scatter.png,PASS,bytes=121067
-figure_non_empty,reports/figures/04_top5_priority_table.png,PASS,bytes=126165
-figure_non_empty,reports/figures/05_alternative_source_top1_by_risk_area.png,PASS,bytes=76114
+figure_non_empty,reports/figures/01_final_risk_ranking.png,PASS,bytes=144532
+figure_non_empty,reports/figures/02_risk_components_stacked.png,PASS,bytes=122217
+figure_non_empty,reports/figures/03_reservoir_vs_alternative_shortage_scatter.png,PASS,bytes=123350
+figure_non_empty,reports/figures/04_top5_priority_table.png,PASS,bytes=124203
+figure_non_empty,reports/figures/05_alternative_source_top1_by_risk_area.png,PASS,bytes=78150
 feature_rows,aquaguard_sigungu_features.csv,PASS,rows=15
 feature_sigungu_unique,sigungu,PASS,unique=15
 final_score_missing,final_water_risk_score,PASS,missing=0
@@ -74,7 +74,7 @@ live_soil_coverage,live_soil_adms_count,PASS,live_soil_adms_count=15
 live_status_success,latest_live_data_status.csv,PASS,status=SUCCESS
 live_feature_sigungu_unique,latest_live_sigungu_features.csv,PASS,unique=15
 live_score_missing,final_live_water_risk_score,PASS,missing=0
-live_score_range,final_live_water_risk_score,PASS,"min=21.853823480785596, max=48.58561049254577"
+live_score_range,final_live_water_risk_score,PASS,"min=24.793963603994563, max=49.85961049254577"
 live_required_col,live_weather_source,PASS,
 live_required_col,live_reservoir_source,PASS,
 live_required_col,live_soil_source,PASS,
