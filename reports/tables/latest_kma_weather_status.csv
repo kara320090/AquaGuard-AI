@@ -1,2 +1,2 @@
 ﻿collection_date_kst,tm1,tm2,source,request_url_without_key,raw_path,raw_bytes,raw_rows,filtered_chungnam_asos_rows,sigungu_count,status
-20260725,20260625,20260725,KMA_APIHUB_ASOS_DAILY_PERIOD,https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php?tm1=20260625&tm2=20260725&stn=0&help=0&authKey=***,data/raw/live_snapshots/20260725/kma_asos_daily_30d_raw.txt,975613,3007,186,6,SUCCESS
+20260727,20260627,20260727,KMA_APIHUB_ASOS_DAILY_PERIOD,https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php?tm1=20260627&tm2=20260727&stn=0&help=0&authKey=***,data/raw/live_snapshots/20260727/kma_asos_daily_30d_raw.txt,975610,3007,186,6,SUCCESS
