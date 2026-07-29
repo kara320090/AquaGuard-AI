@@ -1,2 +1,2 @@
 ﻿collection_date_kst,tm1,tm2,source,request_url_without_key,raw_path,raw_bytes,raw_rows,filtered_chungnam_aws_rows,station_count,sigungu_count,status
-20260728,20260628,20260728,KMA_APIHUB_AWS_DAILY_RAINFALL_PERIOD,https://apihub.kma.go.kr/api/typ01/url/sfc_aws_day.php?tm1=20260628&tm2=20260728&obs=rn_day&stn=0&disp=0&help=0&authKey=***,data/raw/live_snapshots/20260728/kma_aws_daily_rainfall_30d_raw.txt,1432617,22409,2561,83,15,SUCCESS
+20260729,20260629,20260729,KMA_APIHUB_AWS_DAILY_RAINFALL_PERIOD,https://apihub.kma.go.kr/api/typ01/url/sfc_aws_day.php?tm1=20260629&tm2=20260729&obs=rn_day&stn=0&disp=0&help=0&authKey=***,data/raw/live_snapshots/20260729/kma_aws_daily_rainfall_30d_raw.txt,1432495,22407,2560,83,15,SUCCESS
