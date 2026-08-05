@@ -42,3 +42,4 @@
 20260802,https://alldam.chungnam.go.kr/bigdata/collect/csvDownLoad.do?apiIdx=2869,data/raw/live_snapshots/20260802/oldam_reservoir_today_raw.csv,385,cp949,6,6,6,0,2026-08-01,5,71.33333333333333,0,0,1,SUCCESS,2026-08-02 10:26:43,1.0,FRESH
 20260803,https://alldam.chungnam.go.kr/bigdata/collect/csvDownLoad.do?apiIdx=2869,data/raw/live_snapshots/20260803/oldam_reservoir_today_raw.csv,385,cp949,6,6,6,0,2026-08-01,5,71.33333333333333,0,0,1,SUCCESS,2026-08-03 10:27:02,2.0,FRESH
 20260804,https://alldam.chungnam.go.kr/bigdata/collect/csvDownLoad.do?apiIdx=2869,data/raw/live_snapshots/20260804/oldam_reservoir_today_raw.csv,385,cp949,6,6,6,0,2026-08-01,5,71.33333333333333,0,0,1,SUCCESS,2026-08-04 10:16:53,3.0,FRESH
+20260805,https://alldam.chungnam.go.kr/bigdata/collect/csvDownLoad.do?apiIdx=2869,data/raw/live_snapshots/20260805/oldam_reservoir_today_raw.csv,385,cp949,6,6,6,0,2026-08-01,5,71.33333333333333,0,0,1,SUCCESS,2026-08-05 10:20:17,4.0,STALE_BUT_USABLE
