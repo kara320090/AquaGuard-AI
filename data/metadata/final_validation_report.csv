@@ -74,7 +74,7 @@ live_soil_coverage,live_soil_adms_count,PASS,live_soil_adms_count=15
 live_status_success,latest_live_data_status.csv,PASS,status=SUCCESS
 live_feature_sigungu_unique,latest_live_sigungu_features.csv,PASS,unique=15
 live_score_missing,final_live_water_risk_score,PASS,missing=0
-live_score_range,final_live_water_risk_score,PASS,"min=16.625986690868878, max=55.17564599550435"
+live_score_range,final_live_water_risk_score,PASS,"min=17.101173371350495, max=55.23205786667527"
 live_required_col,live_weather_source,PASS,
 live_required_col,live_reservoir_source,PASS,
 live_required_col,live_soil_source,PASS,
