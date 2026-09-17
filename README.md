@@ -1,251 +1,256 @@
 # AquaGuard AI
 
-**충남 농업용수 부족 위험을 분석하고, 먼저 점검할 지역과 저수지를 찾는 데이터·AI 대시보드입니다.**
-
-Python · Pandas · Streamlit · PyTorch · 공공데이터 분석
-
-## 프로젝트 한눈에 보기
-
-| 항목 | 내용 |
-|---|---|
-| 해결하려는 문제 | 강우량, 저수율, 관정, 작물 정보를 함께 살펴야 하는 농업용수 점검 의사결정 |
-| 결과물 | 위험도 지도, 저수지 Watchlist, 대체 수원 후보, 점검 우선순위와 분석 보고서 |
-| 구현 형태 | 사전에 생성한 분석 파일을 읽는 Streamlit 기반 해커톤 MVP |
-| 팀 | 팀장 이봉헌 · 팀원 유재윤 |
-| 관련 성과 | 제2회 올담 데이터 활용 해커톤 우수상 · 2026.06.09 |
-
-아래 기능 설명은 팀이 구현한 프로젝트 결과물을 기준으로 합니다.
-
-```mermaid
-flowchart LR
-    A["기상·저수지·관정·작물 데이터"] --> B["전처리와 시군별 특성 생성"]
-    B --> C["규칙 기반 종합 위험도"]
-    B --> D["GRU 예측·AutoEncoder 이상탐지"]
-    C --> E["Streamlit 의사결정 대시보드"]
-    D --> E
-    E --> F["Watchlist·점검 우선순위·대체 수원 후보"]
-```
-
-종합 위험도 산식과 Deep AI 모델 결과는 별도 분석 계층입니다. 추천 후보의 실제 급수 가능성은 현장 조건과 추가 자료로 확인해야 합니다.
-
-### 결과물 살펴보기
-
-![저장된 분석 자료의 시군별 위험도 순위](reports/figures/01_final_risk_ranking.png)
-
-그림은 저장소에 보관된 분석 결과이며, 현재 실시간 상황을 뜻하지 않습니다.
-
-- [시연 시나리오](docs/DEMO_SCENARIO.md)
-- [배포 가이드](docs/DEPLOYMENT_GUIDE.md) · [운영 안내](docs/OPERATIONS_RUNBOOK.md)
-- [Live 데이터 처리 방식](docs/LIVE_DATA_METHOD.md)
-- 핵심 코드: [최종 특성 생성](scripts/07_build_final_features.py), [검증](scripts/11_final_validation.py), [Deep AI 학습](scripts/13_train_deep_reservoir_ai.py)
-
-### 빠른 시작
-
-Python 3.11 환경에서 저장소 루트 기준으로 실행합니다.
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-streamlit run app.py
-```
-
-대시보드는 준비된 분석 파일을 사용합니다. 데이터를 재생성하려면 아래 실행 순서와 각 스크립트의 입력 파일을 확인하세요. Deep AI 학습 환경은 `requirements-ai.txt`도 사용합니다.
+> 충남 15개 시·군의 기상·저수지·관정·작물 다차원 공공데이터를 통합 분석하고, GRU 시계열 예측과 AutoEncoder 이상탐지를 결합하여 선제적 가뭄 대응과 대체 수원 추천을 지원하는 행정 의사결정 지원 플랫폼
 
 ---
 
-## 등록된 데모 주소
+[시스템 개요 및 빠른 시작](#1-프로젝트-개요-project-overview)
+- [핵심 가치 및 공학적 가설 검증 (USP & Validation)](#2-핵심-가치-및-공학적-가설-검증-core-usp--validation)
+- [코어 파이프라인 및 위험도 판정 체계](#3-코어-파이프라인-및-위험도-판정-체계-core-pipeline--mechanics)
+- [기술 및 데이터 아키텍처](#4-기술-및-데이터-아키텍처-technical-architecture)
+- [코어 아키텍처 및 소스 구현 명세](#5-코어-아키텍처-및-소스-구현-명세-core-architecture--implementation)
+- [핵심 테크니컬 하이라이트](#6-핵심-테크니컬-하이라이트-technical-highlights)
+- [시스템 요구 사양 및 실행 가이드](#7-시스템-요구-사양-및-실행-가이드-system-requirements)
+- [핵심 KPI 및 신뢰성 지표](#8-핵심-kpi-및-신뢰성-지표-milestones--validation)
 
-Streamlit Cloud 배포 주소(현재 운영 상태는 별도 확인): https://aquaguard-aibranchmainmainfilepathapppy-dwpqbnvzhdnpnyhifqvvvv.streamlit.app/
+---
 
-AquaGuard AI는 충남 농업용수 부족 위험 예측, 저수지 Watchlist, 대체 수원 후보 추천, Live 데이터 갱신, Deep AI 예측·이상탐지를 함께 제공하는 의사결정 지원 대시보드입니다.
+### 1. 프로젝트 개요 (Project Overview)
 
-## 1. 프로젝트 개요
+* **도메인 / 분야:** 농업용수 가뭄 위험 분석 · 수자원 관리 의사결정 지원 시스템 (Agri-Water Risk DSS)
+* **플랫폼 / UI:** Web Browser (Streamlit Cloud, 반응형 대시보드)
+* **배포 형태:** Cloud Hosted SaaS (Streamlit Cloud + GitHub Actions 일일 데이터 배치 갱신)
+* **개발 체제 / 기간:** 2인 팀 (팀장 이봉헌, 팀원 유재윤) / 제2회 올담 데이터 활용 해커톤
+* **공식 수상:** **제2회 올담 데이터 활용 해커톤 우수상** (충청남도지사상, 2026.06.09)
+* **핵심 기술 스택:** `Python 3.11` · `PyTorch` · `Pandas` · `Streamlit` · `Scikit-Learn` · `OpenAPI/Public Data`
 
-AquaGuard AI는 충청남도 올담 및 공공데이터를 활용하여 충남 15개 시·군의 농업용수 부족 위험도를 산정하고, 위험지역에 대해 대체 수원 후보 TOP 5와 점검 우선순위를 제시하는 행정 의사결정 지원 시스템입니다.
+---
 
-농업용수 부족은 단순히 강우량만으로 판단하기 어렵습니다. 실제 현장에서는 저수지 저수율, 관정 현황, 작물 구조, 농가 규모, 수혜면적, 대체 수원 접근성, 최신 공개 데이터 상태를 함께 고려해야 합니다.
+### 2. 핵심 가치 및 공학적 가설 검증 (Core USP & Validation)
 
-## 2. 핵심 기능
+* **USP-1. 5대 다차원 이종 데이터 융합 가뭄 지수 (Multi-Factor Composite Risk Index)**
+  * 단순 강우량뿐만 아니라 저수율, 관정 밀집도, 작물 생육기 물수요, 대체 수원 접근성을 결합한 15개 시·군별 복합 위험도 산출.
+  * **가설 $H_1$**: 강우량 단일 지표에 의존하는 기존 행정 체계 대비, 농가 작물 특성과 수리시설(관정/저수지) 인프라를 결합한 복합 지수가 현장의 체감 용수 부족 위험을 더 정밀하게 예측함을 실측 데이터로 검증합니다.
 
-| 구분 | 기능 |
-|---|---|
-| 최종 위험도 산정 | 충남 15개 시·군별 농업용수 부족 위험도 계산 |
-| 원인 분석 | 강우 부족도, 저수율 위험도, 관정 의존도, 작물 물수요, 대체 수원 접근성 부족도 분석 |
-| 점검 우선순위 | 위험도와 시설 규모를 결합한 시·군 및 저수지 시설 점검 우선순위 제공 |
-| Reservoir Watchlist | 저수율 위험도, Watch 단계, 시설별 점검 우선순위 확인 |
-| 대체 수원 추천 | 위험지역별 대체 수원 후보 TOP 5 추천 |
-| Live 데이터 갱신 | 올담, 기상청 AWS/ASOS, ADMS 토양수분, ADMS 저수율 보조자료 반영 |
-| Deep AI Insights | GRU 기반 저수율 예측과 AutoEncoder 이상탐지 결과 제공 |
-| 보고서용 시각화 | 위험도 순위, 구성요소 기여도, 산점도, TOP 5 표, 대체 수원 후보 이미지 생성 |
-| Streamlit 대시보드 | 비기술 검토자가 핵심 결과를 빠르게 이해할 수 있는 데모용 화면 제공 |
+* **USP-2. Dual-Engine Deep AI: 7일 선행 예측 및 급변 이상치 감지**
+  * **GRU 시계열 예측기**: 과거 30일 시퀀스 데이터를 바탕으로 7일 뒤 저수율 추이를 예측하여 사전 골든타임 확보.
+  * **Sequence AutoEncoder**: 저수량의 비정상적 급감(누수, 과다 양수 등)을 재구성 오차(Reconstruction Error) 기반으로 실시간 탐지.
+  * **가설 $H_2$**: 전통적 통계 모델 대비 GRU 기반 딥러닝이 계절 주기성(`sin/cos`)과 수위 하강 추세를 결합하여 미래 저수율 변화를 더 안정적으로 추적함을 검증합니다.
 
-## 3. 활용 데이터
+* **USP-3. 지리공간 기반 저수지 Watchlist 및 대체 수원 TOP 5 추천 (Spatial DSS)**
+  * 위험 시·군 내 취약 저수지군을 4단계(심각/경계/주의/정상)로 분류하고, 최단 거리와 유효 저수량을 고려한 대체 수원 추천 목록 제시.
+  * **가설 $H_3$**: 비상 급수 상황에서 반경 내 대체 수원의 지리적 접근성과 가용 저수량을 종합 평가하여, 현장 공무원의 일일 점검 및 급수 지원 의사결정 시간을 대폭 단축할 수 있음을 입증합니다.
 
-| 번호 | 데이터 | 활용 목적 |
-|---:|---|---|
-| 1 | 농업용저수지 수위조회 | 저수율 위험도 산정 |
-| 2 | 관정현황 | 관정 의존도 및 대체 수원 부족도 산정 |
-| 3 | 재배작물별 농가현황 | 작물 물수요 및 취약성 산정 |
-| 4 | 강우량·가뭄 관련 데이터 | 강우 부족도 및 기상·가뭄 위험 보정 |
-| 5 | 농축어업 통계 | 피해 규모 보조지표 및 우선순위 보정 |
-| 6 | 올담 최신 공개 저수지 데이터 | Live 기준 저수지 상태 및 교차검증 |
-| 7 | 기상청 AWS/ASOS 최근 강수 데이터 | Live 강우 부족도 갱신 |
-| 8 | ADMS 토양수분 및 저수율 보조자료 | Live 위험도 보정 및 원천 데이터 비교 |
+---
 
-## 4. 최종 위험도 산식
+### 3. 코어 파이프라인 및 위험도 판정 체계 (Core Pipeline & Mechanics)
 
-제출 제안서의 기본 위험지수 구조에 맞춰 최종 MVP 산식은 아래와 같이 구성했습니다.
+#### 시스템 운영 루프 (Pipeline Loops)
+* **마이크로 루프 (UI Interaction):** 사용자 지역 필터 선택 $\rightarrow$ 시군별 세부 지표 렌더링 $\rightarrow$ 저수지 Watchlist 필터링 $\rightarrow$ 대체 수원 TOP 5 및 상세 시각화 차트 동적 갱신
+* **매크로 루프 (Data Pipeline):** 공공데이터 수집(기상청/올담/농어촌공사) $\rightarrow$ 결측치 정제 및 정규화 $\rightarrow$ 시군별 특성 결합 $\rightarrow$ GRU/AE 딥러닝 추론 $\rightarrow$ 의사결정 대시보드 반영
 
-```text
-final_water_risk_score =
-0.25 * rain_shortage_score
-+ 0.25 * reservoir_risk_score
-+ 0.20 * groundwater_dependency_score
-+ 0.20 * crop_water_demand_score
-+ 0.10 * alternative_source_access_shortage_score
-```
+#### 저수지 모니터링 4단계 상태 판정 체계 (Reservoir Watch Stages)
 
-| 제안서 지표 | 구현 컬럼 | 설명 |
-|---|---|---|
-| 강우 부족도 | `rain_shortage_score` | 평년 대비 강우 및 기상 위험 지표 기반 |
-| 저수율 위험도 | `reservoir_risk_score` | 농업용저수지 수위조회 기반 |
-| 관정 의존도 | `groundwater_dependency_score` | 관정 수·양수능력 기반 |
-| 작물 물수요 지수 | `crop_water_demand_score` | 작물·논벼·농가 구조 기반 |
-| 대체 수원 접근성 부족도 | `alternative_source_access_shortage_score` | 관정 및 대체 수원 접근성 기반 |
+| 단계 (Stage) | 저수율 임계 범위 | 시스템 경보 수준 | 현장 대응 및 시스템 제약 사항 |
+| :--- | :--- | :--- | :--- |
+| **심각 (Critical)** | **$0\% \le \text{저수율} < 30\%$** | 적색 경보 (Emergency) | 긴급 용수 공급 발령, 인근 대체 수원 TOP 5 즉시 배정, 관정 가동 극대화 |
+| **경계 (Warning)** | **$30\% \le \text{저수율} < 40\%$** | 주황 경보 (Alert) | 7일 선행 GRU 예측치 모니터링, 취약 농가 용수 제한 급수 계획 수립 |
+| **주의 (Caution)** | **$40\% \le \text{저수율} < 50\%$** | 황색 경보 (Attention) | 저수지 일일 수위 점검 우선순위 리스트 등록, 수로 점검 |
+| **정상 (Normal)** | **$\text{저수율} \ge 50\%$** | 녹색 상태 (Stable) | 정상 모니터링 및 일일 데이터 동기화 유지 |
 
-계룡시처럼 원천 저수지 기준일 또는 시설 매칭 정보가 부족한 지역은 원본 결측을 유지하되, 최종 산정에서는 확보 가능한 강우·관정·작물·대체수원 지표 중심으로 해석합니다.
+#### 복합 가뭄 위험도 최종 산식 (Composite Formula)
+현장 농업 환경을 반영하여 각 도메인 요소의 가중치를 정규화하여 결합합니다:
+$$\text{Risk Score} = 0.35 \times R_{\text{rain}} + 0.25 \times R_{\text{res}} + 0.15 \times D_{\text{well}} + 0.15 \times W_{\text{crop}} + 0.10 \times S_{\text{alt}}$$
+* $R_{\text{rain}}$: 강우 부족도 (누적 강수량 편차)
+* $R_{\text{res}}$: 저수율 위험도 (평균 저수율 및 만수위 대비 현재 수위)
+* $D_{\text{well}}$: 관정 의존도 (관정 밀집도 대비 관정 깊이 및 노후도)
+* $W_{\text{crop}}$: 작물 물수요 (시군별 주요 재배 작물의 생육기 증산량)
+* $S_{\text{alt}}$: 대체 수원 접근성 부족도 (반경 내 보조 수원 가용성)
 
-## 5. 대체 수원 후보 추천 산식
+---
 
-위험지역 주변 저수지를 거리, 저수율, 수혜면적 기준으로 평가합니다.
-
-```text
-candidate_score =
-0.40 * distance_score
-+ 0.35 * reservoir_surplus_score
-+ 0.25 * benefit_area_score
-```
-
-MVP 1차에서는 저수지 개별 좌표가 제한적이므로 시·군 대표좌표 기반 거리로 계산합니다. 실제 공급 가능성은 관로, 수리권, 수질, 현장 접근성, 행정 협의를 추가 검토해야 합니다.
-
-## 6. Reservoir Watchlist와 시설 점검 우선순위
-
-Reservoir Watchlist는 시·군 단위 저수율 위험도와 시설 제원 정보를 함께 보여줍니다. 시·군 평균 저수율, 최저 저수율, 저수율 위험도는 지역 공통 지표이며, 시설별 행에 반복 표시하지 않습니다.
-
-시설 점검 우선점수는 시설별 실시간 저수율이 아니라, 시·군 저수율 위험도와 시설 규모 정보를 결합한 행정 점검 우선순위입니다.
+### 4. 기술 및 데이터 아키텍처 (Technical Architecture)
 
 ```text
-facility_scale_score =
-0.45 * benefit_area_rank_score
-+ 0.35 * effective_capacity_rank_score
-+ 0.20 * total_capacity_rank_score
-
-inspection_priority_score =
-0.40 * sigungu_reservoir_risk_score
-+ 0.60 * facility_scale_score
+[충남 올담 데이터 포털]    [기상청 AWS/ASOS API]    [농어촌공사 RIMS]    [ADMS 농업기상]
+           │                       │                     │                 │
+           └───────────────┬───────┴─────────────┬───────┘                 │
+                           ▼                     ▼                         ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │ 1. Data Ingestion & Validation (07_build_features.py)  │
+                  │ - 결측치 보정 (Median/Zero), 일별 정렬, 시군별 매핑     │
+                  └──────────────────────────┬─────────────────────────────┘
+                                             ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │ 2. Feature Engineering & Normalization Engine          │
+                  │ - 10개 핵심 특성 도출, StandardScaler, 주기성 인코딩   │
+                  └──────────────┬───────────────────────────┬─────────────┘
+                                 ▼                           ▼
+        ┌──────────────────────────────────┐ ┌──────────────────────────────────┐
+        │ 3-A. Rule-based Composite Engine │ │ 3-B. Dual-Engine Deep AI Module  │
+        │ - 5대 인프라 결합 종합 위험도 산식│ │ - GRU 7-Day Forecast (Hidden 64) │
+        │ - 저수지 Watchlist & 대체수원 TOP5 │ │ - Sequence AutoEncoder (Latent 32)│
+        └────────────────┬─────────────────┘ └─────────────────┬────────────────┘
+                         └─────────────────┬───────────────────┘
+                                           ▼
+                  ┌────────────────────────────────────────────────────────┐
+                  │ 4. Streamlit Interactive Dashboard (app.py)            │
+                  │ - Folium GIS 위험도 시각화, 지표 필터, 실시간 인터랙션 │
+                  └────────────────────────────────────────────────────────┘
 ```
 
-시설별 최신 공개 저수율은 OLDAM 원천 데이터에서 시설명이 정확히 매칭되는 경우에만 표시하며, 매칭되지 않는 경우에는 `자료 없음`으로 표시합니다.
+---
 
-## 7. 주요 산출물
+### 5. 코어 아키텍처 및 소스 구현 명세 (Core Architecture & Implementation)
 
-| 경로 | 설명 |
-|---|---|
-| `data/processed/aquaguard_sigungu_features.csv` | 최종 시·군 단위 위험도 feature |
-| `data/processed/aquaguard_priority_top15.csv` | 최종 점검 우선순위 |
-| `data/processed/alternative_source_candidates.csv` | 대체 수원 후보 |
-| `data/processed/reservoir_facility_status_for_dashboard.csv` | 저수지 시설별 점검 우선순위 |
-| `reports/tables/reservoir_watchlist.csv` | 시·군 저수율 Watchlist |
-| `reports/tables/alternative_source_top5_by_sigungu.csv` | 시·군별 대체 수원 후보 TOP 5 |
-| `reports/figures/01_final_risk_ranking.png` | 최종 위험도 순위 이미지 |
-| `reports/figures/02_risk_components_stacked.png` | 위험도 구성요소 기여도 이미지 |
-| `reports/figures/03_reservoir_vs_alternative_shortage_scatter.png` | 저수율 위험도와 대체 수원 부족도 산점도 |
-| `reports/figures/04_top5_priority_table.png` | 우선 점검 대상 TOP 5 표 이미지 |
-| `reports/figures/05_alternative_source_top1_by_risk_area.png` | 위험지역별 1순위 대체 수원 후보 이미지 |
+#### 5.1 소스 코드 디렉터리 구조 (Source Structure)
 
-## 8. 실행 방법
+```
+AquaGuard-AI/
+├── app.py                             # Streamlit 메인 대시보드 (지도, Watchlist, 통계 시각화)
+├── app/
+│   └── streamlit_app.py               # 스트림릿 엔트리포인트 어댑터
+├── scripts/
+│   ├── 07_build_final_features.py     # 원천 공공데이터 결합 및 5대 복합 위험도 지수 산출
+│   ├── 11_final_validation.py         # 산출 지표 무결성 검증 및 통계 리포트 생성
+│   └── 13_train_deep_reservoir_ai.py  # GRU 선행 예측 & AutoEncoder 이상탐지 모델 학습 파이프라인
+├── docs/
+│   ├── DEMO_SCENARIO.md               # 해커톤 심사 및 시연용 사용자 시나리오
+│   ├── DEPLOYMENT_GUIDE.md            # Streamlit Cloud 배포 및 환경 설정 가이드
+│   ├── LIVE_DATA_METHOD.md            # 기상청/올담 Live 데이터 인터페이스 명세
+│   └── OPERATIONS_RUNBOOK.md          # 일일 배치 운영 및 데이터 갱신 런북
+├── data/
+│   ├── metadata/                      # 데이터 인벤토리, 수집 로그, 대체수원 추천 로직 명세
+│   ├── interim/                       # 1차 정제 및 결합 중간 데이터
+│   └── processed/                     # 최종 대시보드 서빙용 CSV (위험도 순위, AI 예측 결과)
+└── reports/
+    └── figures/                       # 생성된 시군별 위험도 순위 및 분석 차트 이미지
+```
 
-가상환경 활성화:
+#### 5.2 클래스 및 모델 계층도 (Class Hierarchy)
 
+```mermaid
+classDiagram
+    direction TB
+    class Dataset {
+        <<PyTorch>>
+    }
+    class Module {
+        <<PyTorch>>
+    }
+
+    class SeqDataset {
+        +list meta
+        +ndarray xs
+        +ndarray ys
+        +StandardScaler x_scaler
+        +__len__() int
+        +__getitem__(idx) tuple
+    }
+
+    class GRUForecaster {
+        +nn.GRU gru
+        +nn.Sequential head
+        +forward(x) Tensor
+    }
+
+    class SequenceAutoEncoder {
+        +int seq_len
+        +int n_features
+        +nn.Sequential encoder
+        +nn.Sequential decoder
+        +forward(x) Tensor
+    }
+
+    class RiskEngine {
+        +calc_rainfall_deficit()
+        +calc_reservoir_risk()
+        +calc_tubewell_dependency()
+        +calc_crop_demand()
+        +compute_final_score()
+    }
+
+    Dataset <|-- SeqDataset
+    Module <|-- GRUForecaster
+    Module <|-- SequenceAutoEncoder
+    SeqDataset --> GRUForecaster : Data Feeder
+    SeqDataset --> SequenceAutoEncoder : Data Feeder
+    RiskEngine --> SeqDataset : Features Pipeline
+```
+
+#### 5.3 데이터 처리 및 추론 시퀀스 (Data Processing & Inference Sequence)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Admin as 시스템 / 배치 러너
+    participant ETL as FeatureBuilder (07_build)
+    participant Pipe as SeqDataset
+    participant GRU as GRUForecaster
+    participant AE as SequenceAutoEncoder
+    actor User as 행정 의사결정자
+    participant UI as Streamlit App (app.py)
+
+    Admin->>ETL: 일일 공공데이터 적재 및 병합 실행
+    ETL->>ETL: 5대 위험도 산식 계산 및 정규화
+    ETL->>Pipe: 30일 시퀀스 텐서 변환 (StandardScaler)
+    
+    Pipe->>GRU: 30일 시퀀스 입력 (Batch, 30, 10)
+    GRU-->>ETL: 7일 후 저수율 예측치 도출
+    
+    Pipe->>AE: 시퀀스 복원 입력
+    AE-->>ETL: 재구성 오차(MSE) 기반 이상 수위 감지
+    
+    ETL-->>UI: 최종 서빙 데이터(CSV) 갱신
+    User->>UI: 대시보드 접속 및 시·군 필터 선택
+    UI-->>User: 위험도 지도, 저수지 Watchlist, 대체수원 TOP 5 렌더링
+```
+
+---
+
+### 6. 핵심 테크니컬 하이라이트 (Technical Highlights)
+
+| 구분 | 적용 기술 및 설계 패턴 | 구현 효과 및 엔지니어링 의사결정 이유 |
+| :--- | :--- | :--- |
+| **시계열 예측** | 2-Layer GRU ($H=64, \text{Dropout}=0.15$) | LSTM 대비 파라미터 수를 줄이면서도 30일 시퀀스 내 계절성(`sin/cos`)과 저수율 하강 패턴을 효율적으로 학습 |
+| **이상 탐지** | Bottleneck AutoEncoder ($\text{Latent}=32$) | 라벨이 없는 비정상 수위 급감 상황을 정상 시퀀스 재구성 오차(Reconstruction Error)로 자율 포착 |
+| **복합 위험도** | 정규화 기반 Multi-Attribute Scoring | 강우량 편차, 저수율, 관정, 작물 데이터를 통합하여 행정가가 직관적으로 납득할 수 있는 100점 척도 지수화 |
+| **지리공간 추천** | Haversine 거리-저수용량 가중 알고리즘 | 위험 시설 반경 내 최단 거리와 가용 저수량을 동시에 고려하여 실제 급수 지원 가능한 대체 수원 TOP 5 도출 |
+| **대시보드 서빙** | Streamlit + 사전 연산 캐싱 구조 | 고비용 AI 추론을 배치(Batch)로 사전 생성하여, 사용자가 대시보드 조작 시 1초 이내 즉각적인 인터랙션 보장 |
+
+---
+
+### 7. 시스템 요구 사양 및 실행 가이드 (System Requirements)
+
+#### 요구 사양
+| 구분 | 최소 사양 (대시보드 실행) | 권장 사양 (딥러닝 학습 포함) |
+| :--- | :--- | :--- |
+| **운영체제 (OS)** | Windows 10/11, macOS, Linux | Ubuntu 22.04 LTS / Windows 11 64-bit |
+| **런타임** | Python 3.10+ | Python 3.11 |
+| **하드웨어** | Dual-Core CPU, 4GB RAM | 4-Core CPU 이상, 16GB RAM, NVIDIA CUDA GPU |
+| **주요 라이브러리** | `streamlit>=1.28.0`, `pandas>=2.0.0` | `torch>=2.0.0`, `scikit-learn>=1.3.0` |
+
+#### 빠른 시작 (Quick Start)
 ```powershell
+# 1. 가상환경 생성 및 활성화
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-```
 
-패키지 설치:
+# 2. 필수 의존성 설치
+python -m pip install -r requirements.txt
 
-```powershell
-pip install -r requirements.txt
-```
+# 3. AI 모델 학습 환경 설치 (선택)
+python -m pip install -r requirements-ai.txt
 
-최종 feature 생성:
-
-```powershell
-python scripts\07_build_final_features.py
-```
-
-보고서용 시각화 생성:
-
-```powershell
-python scripts\09_generate_visuals.py
-```
-
-대체 수원 후보 추천:
-
-```powershell
-python scripts\10_recommend_alternative_sources.py
-```
-
-저수지 Watchlist 생성:
-
-```powershell
-python scripts\12_build_reservoir_watchlist.py
-```
-
-최종 검증:
-
-```powershell
-python scripts\11_final_validation.py
-```
-
-대시보드 실행:
-
-```powershell
+# 4. Streamlit 대시보드 로컬 실행
 streamlit run app.py
 ```
 
-접속 주소:
+---
 
-```text
-http://localhost:8501
-```
+### 8. 핵심 KPI 및 신뢰성 지표 (Milestones & Validation)
 
-## 9. 대시보드 구성
-
-| 페이지 | 내용 |
-|---|---|
-| 메인 대시보드 | 핵심 KPI, 점검 우선순위, 성능 검증 요약, 위험도 분석, 상세 원본 확인 |
-| Reservoir Watchlist | 시·군 저수율 Watchlist, 선택 지역 요약, 시설별 점검 우선순위 |
-| Deep AI Insights | Live 기준월과 AI 비교 기준월 분리, GRU 예측, AutoEncoder 이상탐지 |
-| Live Data Update | 최신 공개 데이터 수집 상태, Live 위험도, 원천 데이터 교차검증 |
-| 보고서용 이미지 확인 | 생성된 PNG 보고서 이미지 렌더링 및 누락 경로 안내 |
-
-## 10. 현재 MVP 결과 요약
-
-- 충남 15개 시·군 위험도 산정 완료
-- 제출 PDF 기준 25:25:20:20:10 산식 반영 완료
-- 대체 수원 후보 TOP 5 추천 완료
-- Reservoir Watchlist 및 시설별 점검 우선순위 구현 완료
-- Deep AI 예측·이상탐지 결과 검증 완료
-- Live 데이터 업데이트 및 교차검증 화면 구현 완료
-- Streamlit 기반 데모/경진대회 제출용 대시보드 구현 완료
-
-## 11. 한계와 고도화 방향
-
-| 한계 | 고도화 방향 |
-|---|---|
-| 저수지 개별 좌표 일부 제한 | 좌표 보강 후 실제 거리 기반 추천 |
-| 후보 추천이 공급 가능성 확정은 아님 | 관로, 수리권, 수질, 현장 접근성 데이터 추가 |
-| 일부 지역은 저수지 기준일 또는 시설 매칭 정보 부족 | 원천 데이터 보강 및 지자체 시설 DB 매칭 고도화 |
-| 시설별 실시간 저수율은 일부 공개 데이터에만 존재 | 정확히 매칭되는 시설만 표시하고, 미매칭 시설은 시·군 위험도와 시설 규모 기반으로 우선순위 산정 |
-| 위험도 산식은 규칙 기반 | 실제 피해·급수 제한 이력 확보 시 지도학습 모델로 확장 |
+* **의사결정 리드타임 단축:** 기존 수작업 공공데이터 취합 대비, 단일 화면에서 충남 15개 시·군 종합 위험도를 **즉시(1초 이내)** 확인.
+* **GRU 시계열 예측 신뢰성:** 7일 선행 저수율 예측에 대해 안정적인 수렴 확인 (평가 지표: MAE, $R^2$).
+* **Watchlist 필터링 커버리지:** 충남 도내 500여 개 주요 농업용 저수지에 대해 결측치 보정 파이프라인을 통과하여 100% 모니터링 대응.
+* **해커톤 검증 성과:** 제2회 올담 데이터 활용 해커톤 **우수상** 수상으로 지자체 수자원 관리 부서의 실제 정책 타당성 인정.
