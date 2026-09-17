@@ -1,8 +1,62 @@
 # AquaGuard AI
 
-## Live Demo
+**충남 농업용수 부족 위험을 분석하고, 먼저 점검할 지역과 저수지를 찾는 데이터·AI 대시보드입니다.**
 
-Streamlit Cloud 배포 URL: https://aquaguard-aibranchmainmainfilepathapppy-dwpqbnvzhdnpnyhifqvvvv.streamlit.app/
+Python · Pandas · Streamlit · PyTorch · 공공데이터 분석
+
+## 프로젝트 한눈에 보기
+
+| 항목 | 내용 |
+|---|---|
+| 해결하려는 문제 | 강우량, 저수율, 관정, 작물 정보를 함께 살펴야 하는 농업용수 점검 의사결정 |
+| 결과물 | 위험도 지도, 저수지 Watchlist, 대체 수원 후보, 점검 우선순위와 분석 보고서 |
+| 구현 형태 | 사전에 생성한 분석 파일을 읽는 Streamlit 기반 해커톤 MVP |
+| 팀 | 팀장 이봉헌 · 팀원 유재윤 |
+| 관련 성과 | 제2회 올담 데이터 활용 해커톤 우수상 · 2026.06.09 |
+
+아래 기능 설명은 팀이 구현한 프로젝트 결과물을 기준으로 합니다.
+
+```mermaid
+flowchart LR
+    A["기상·저수지·관정·작물 데이터"] --> B["전처리와 시군별 특성 생성"]
+    B --> C["규칙 기반 종합 위험도"]
+    B --> D["GRU 예측·AutoEncoder 이상탐지"]
+    C --> E["Streamlit 의사결정 대시보드"]
+    D --> E
+    E --> F["Watchlist·점검 우선순위·대체 수원 후보"]
+```
+
+종합 위험도 산식과 Deep AI 모델 결과는 별도 분석 계층입니다. 추천 후보의 실제 급수 가능성은 현장 조건과 추가 자료로 확인해야 합니다.
+
+### 결과물 살펴보기
+
+![저장된 분석 자료의 시군별 위험도 순위](reports/figures/01_final_risk_ranking.png)
+
+그림은 저장소에 보관된 분석 결과이며, 현재 실시간 상황을 뜻하지 않습니다.
+
+- [시연 시나리오](docs/DEMO_SCENARIO.md)
+- [배포 가이드](docs/DEPLOYMENT_GUIDE.md) · [운영 안내](docs/OPERATIONS_RUNBOOK.md)
+- [Live 데이터 처리 방식](docs/LIVE_DATA_METHOD.md)
+- 핵심 코드: [최종 특성 생성](scripts/07_build_final_features.py), [검증](scripts/11_final_validation.py), [Deep AI 학습](scripts/13_train_deep_reservoir_ai.py)
+
+### 빠른 시작
+
+Python 3.11 환경에서 저장소 루트 기준으로 실행합니다.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+streamlit run app.py
+```
+
+대시보드는 준비된 분석 파일을 사용합니다. 데이터를 재생성하려면 아래 실행 순서와 각 스크립트의 입력 파일을 확인하세요. Deep AI 학습 환경은 `requirements-ai.txt`도 사용합니다.
+
+---
+
+## 등록된 데모 주소
+
+Streamlit Cloud 배포 주소(현재 운영 상태는 별도 확인): https://aquaguard-aibranchmainmainfilepathapppy-dwpqbnvzhdnpnyhifqvvvv.streamlit.app/
 
 AquaGuard AI는 충남 농업용수 부족 위험 예측, 저수지 Watchlist, 대체 수원 후보 추천, Live 데이터 갱신, Deep AI 예측·이상탐지를 함께 제공하는 의사결정 지원 대시보드입니다.
 
