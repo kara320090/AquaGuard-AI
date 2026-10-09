@@ -81,7 +81,7 @@ live_required_col,live_soil_source,PASS,
 oldam_status_success,latest_oldam_status_summary.csv,PASS,status=SUCCESS
 oldam_matched_rows,matched_rows,PASS,matched_rows=6
 oldam_sigungu_count,sigungu_count,PASS,sigungu_count=5
-aws_status_success,latest_kma_aws_weather_status.csv,PASS,status=SUCCESS
+aws_status_success,latest_kma_aws_weather_status.csv,PASS,status=FALLBACK_EXISTING
 aws_sigungu_count,sigungu_count,PASS,sigungu_count=15
 soil_status_success,latest_adms_soil_moisture_status.csv,PASS,status=SUCCESS
 soil_sigungu_count,sigungu_count,PASS,sigungu_count=15

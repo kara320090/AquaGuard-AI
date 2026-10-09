@@ -1,2 +1,2 @@
-﻿collection_date_kst,tm1,tm2,source,request_url_without_key,raw_path,raw_bytes,raw_rows,filtered_chungnam_asos_rows,sigungu_count,status
-20261008,20260908,20261008,KMA_APIHUB_ASOS_DAILY_PERIOD,https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php?tm1=20260908&tm2=20261008&stn=0&help=0&authKey=***,data/raw/live_snapshots/20261008/kma_asos_daily_30d_raw.txt,975265,3006,186,6,SUCCESS
+﻿collection_date_kst,tm1,tm2,source,request_url_without_key,raw_path,raw_bytes,raw_rows,filtered_chungnam_asos_rows,sigungu_count,status,error_message
+20261009,20260909,20261009,KMA_APIHUB_ASOS_DAILY_PERIOD,https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php?tm1=20260909&tm2=20261009&stn=0&help=0&authKey=***,data/raw/live_snapshots/20261009/kma_asos_daily_30d_raw.txt,0,0,0,15,FALLBACK_EXISTING,504 Server Error: Gateway Timeout for url: https://apihub.kma.go.kr/api/typ01/url/kma_sfcdd3.php?tm1=20260909&tm2=20261009&stn=0&help=0&authKey=Wx7Ykd0oQFKe2JHdKLBSgw
