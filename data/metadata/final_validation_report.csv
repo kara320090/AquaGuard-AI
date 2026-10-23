@@ -45,7 +45,7 @@ figure_non_empty,reports/figures/05_alternative_source_top1_by_risk_area.png,PAS
 feature_rows,aquaguard_sigungu_features.csv,PASS,rows=15
 feature_sigungu_unique,sigungu,PASS,unique=15
 final_score_missing,final_water_risk_score,PASS,missing=0
-final_score_range,final_water_risk_score,PASS,"min=19.204248734570253, max=41.018313990061024"
+final_score_range,final_water_risk_score,PASS,"min=19.204248734570253, max=41.01831399006102"
 feature_required_col,rain_shortage_score,PASS,
 feature_required_col,reservoir_risk_score,PASS,
 feature_required_col,groundwater_dependency_score,PASS,
@@ -66,7 +66,7 @@ facility_priority_col,facility_priority_reason,PASS,
 facility_priority_col,facility_priority_level,PASS,
 facility_priority_rank_missing,facility_priority_rank,PASS,missing=0
 facility_priority_score_missing,inspection_priority_score,PASS,missing=0
-facility_priority_score_range,inspection_priority_score,PASS,"min=1.1850000000000025, max=69.43333333333334"
+facility_priority_score_range,inspection_priority_score,PASS,"min=1.1850000000000023, max=69.43333333333334"
 facility_priority_spread,당진시,PASS,spread=51.000
 live_feature_rows,latest_live_data_status.csv,PASS,live_feature_rows=15
 live_weather_coverage,live_weather_kma_count,PASS,live_weather_kma_count=15
@@ -74,7 +74,7 @@ live_soil_coverage,live_soil_adms_count,PASS,live_soil_adms_count=15
 live_status_success,latest_live_data_status.csv,PASS,status=SUCCESS
 live_feature_sigungu_unique,latest_live_sigungu_features.csv,PASS,unique=15
 live_score_missing,final_live_water_risk_score,PASS,missing=0
-live_score_range,final_live_water_risk_score,PASS,"min=16.625986690868878, max=43.21029546417308"
+live_score_range,final_live_water_risk_score,PASS,"min=16.625986690868878, max=43.21029546417307"
 live_required_col,live_weather_source,PASS,
 live_required_col,live_reservoir_source,PASS,
 live_required_col,live_soil_source,PASS,
